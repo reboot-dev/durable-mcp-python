@@ -1,0 +1,59 @@
+syntax = "proto3";
+
+package rbt.mcp.v1;
+
+import "rbt/v1alpha1/options.proto";
+
+////////////////////////////////////////////////////////////////////////
+
+message Session {
+  option (rbt.v1alpha1.state) = {
+  };
+}
+
+////////////////////////////////////////////////////////////////////////
+
+service SessionMethods {
+  rpc Create(CreateRequest) returns (CreateResponse) {
+    option (rbt.v1alpha1.method).writer = {
+    };
+  }
+
+  rpc HandleMessage(HandleMessageRequest) returns (HandleMessageResponse) {
+    option (rbt.v1alpha1.method).workflow = {
+    };
+  }
+
+  rpc Run(RunRequest) returns (RunResponse) {
+    option (rbt.v1alpha1.method).workflow = {
+    };
+  }
+}
+
+////////////////////////////////////////////////////////////////////////
+
+message CreateRequest {}
+
+message CreateResponse {
+  string write_queue_id = 2;
+}
+
+////////////////////////////////////////////////////////////////////////
+
+message HandleMessageRequest {
+  string path = 1;
+  bytes message_bytes = 2;
+}
+
+message HandleMessageResponse {}
+
+////////////////////////////////////////////////////////////////////////
+
+message RunRequest {
+  string path = 1;
+  bytes message_bytes = 2;
+}
+
+message RunResponse {}
+
+////////////////////////////////////////////////////////////////////////
