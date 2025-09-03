@@ -18,6 +18,14 @@ Activate the `venv`:
 ```console
 source .venv/bin/activate
 ```
+Generate code:
+```console
+rbt generate
+```
+Make sure you have Docker running:
+```console
+docker ps
+```
 And run the test(s):
 ```console
 PYTHONPATH=.:api python tests/test.py
