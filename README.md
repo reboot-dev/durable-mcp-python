@@ -28,7 +28,10 @@ docker ps
 ```
 And run the test(s):
 ```console
-PYTHONPATH=.:api python tests/test.py
+pytest tests/test.py
 ```
 
-NOTE: currently `pytest` is NOT supported.
+### TODO
+- [ ] `EventStore` support for resumability.
+- [ ] Enable calling `resource` and `prompt` using Reboot workflows.
+- [ ] Upgrade to latest Reboot and remove some of the monkey patches.
