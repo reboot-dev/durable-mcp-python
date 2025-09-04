@@ -27,7 +27,7 @@ async def add(a: int, b: int, context: ToolContext) -> int:
 application = Application(servicers=mcp.servicers())
 
 # Mounts the server at the path specified.
-application.http.mount(mcp.path, mcp.streamable_http_app())
+application.http.mount(mcp.path, mcp.streamable_http_app())  # type: ignore
 
 
 class TestSomething(unittest.IsolatedAsyncioTestCase):

@@ -40,7 +40,7 @@ from starlette.requests import Request
 from starlette.responses import Response, StreamingResponse
 from starlette.routing import Route
 from starlette.types import Receive, Scope, Send
-from typing import Callable, Protocol
+from typing import Callable, Protocol, Union
 from uuid import uuid4
 
 
@@ -93,17 +93,12 @@ class DurableMCP(fastmcp.FastMCP):
 
         for parameter_name, parameter in signature.parameters.items():
             annotation = parameter.annotation
-            if (
-                isinstance(annotation, type) and
-                issubclass(annotation, fastmcp.Context)
-            ):
+            if (isinstance(annotation, type)
+                    and issubclass(annotation, fastmcp.Context)):
                 raise TypeError(
-                    "`DurableMCP` only injects `ToolContext` not `Context`"
-                )
-            if (
-                isinstance(annotation, type) and
-                issubclass(annotation, ToolContext)
-            ):
+                    "`DurableMCP` only injects `ToolContext` not `Context`")
+            if (isinstance(annotation, type)
+                    and issubclass(annotation, ToolContext)):
                 context_parameter_names.append(parameter_name)
             else:
                 new_parameters.append(parameter)
@@ -124,7 +119,7 @@ class DurableMCP(fastmcp.FastMCP):
 
             return fn(**bound_arguments)
 
-        wrapper.__signature__ = new_signature
+        setattr(wrapper, '__signature__', new_signature)
         wrapper.__name__ = fn.__name__
         wrapper.__doc__ = fn.__doc__
 
@@ -145,17 +140,15 @@ def _streamable_http_app(
     path: str,
     external_context_from_request: Callable[[Request], ExternalContext],
 ):
-    return Starlette(
-        routes=[
-            Route(
-                "/{path:path}",
-                endpoint=StreamableHTTPASGIApp(
-                    path,
-                    external_context_from_request,
-                ),
+    return Starlette(routes=[
+        Route(
+            "/{path:path}",
+            endpoint=StreamableHTTPASGIApp(
+                path,
+                external_context_from_request,
             ),
-        ],
-    )
+        ),
+    ], )
 
 
 class StreamableHTTPASGIApp:
@@ -195,6 +188,8 @@ class StreamableHTTPASGIApp:
             # properly get routed.
             del headers[CONSENSUS_ID_HEADER]
 
+            response: Union[StreamingResponse, Response]
+
             try:
                 async with httpx.AsyncClient() as client:
                     # Too simplify we always perform a streaming
@@ -203,7 +198,7 @@ class StreamableHTTPASGIApp:
                         request.method,
                         str(request.url),
                         headers=headers,
-                        data=await request.body(),
+                        content=await request.body(),
                     ) as upstream:
                         # Create a generator to yield chunks from the
                         # upstream response.
@@ -285,7 +280,14 @@ class StreamableHTTPASGIApp:
                         # and if we really want we could probably
                         # grab what is necessary and send if along
                         # in a picklable way.
-                        message.metadata.request_context = None
+                        if isinstance(message, Exception):
+                            # Log the error or handle it appropriately
+                            print(f"Error in stream: {message}")
+                            continue  # Skip this iteration
+                        # Check if metadata exists and has request_context
+                        if message.metadata is not None and hasattr(
+                                message.metadata, 'request_context'):
+                            message.metadata.request_context = None
                         # TODO: ideally we spawn `HandleMessage`
                         # _before_ a 202 Accepted is sent.
                         await session.spawn().HandleMessage(
@@ -297,7 +299,8 @@ class StreamableHTTPASGIApp:
                 async def writer():
                     while True:
                         dequeue = await session_write_queue.Dequeue(
-                            context, bulk=True
+                            context,
+                            bulk=True
                         )
                         messages = [
                             pickle.loads(item.bytes) for item in dequeue.items
@@ -332,8 +335,10 @@ class StreamableHTTPASGIApp:
                 print(f"Session {mcp_session_id} crashed: {e}")
             finally:
                 if http_transport.is_terminated:
-                    del self._connect_tasks[mcp_session_id]
-                    del self._http_transports[mcp_session_id]
+                    if mcp_session_id in self._connect_tasks:
+                        del self._connect_tasks[mcp_session_id]
+                    if mcp_session_id in self._http_transports:
+                        del self._http_transports[mcp_session_id]
 
         self._connect_tasks[mcp_session_id].add_done_callback(done)
 
@@ -372,13 +377,15 @@ class SessionServicer(Session.Servicer):
     def _get_request_streams(self, request_id: types.RequestId):
         try:
             if request_id not in self._request_streams:
+                read_stream_recieve, read_stream_send = create_memory_object_stream[
+                    SessionMessage | Exception]()
+                write_stream_receive, write_stream_send = create_memory_object_stream[
+                    SessionMessage]()
                 # Create streams for communicating with MCP server.
                 self._request_streams[request_id] = Streams(
                     refs=1,  # Initial reference count.
-                    read_stream=create_memory_object_stream[
-                        SessionMessage | Exception
-                    ](),
-                    write_stream=create_memory_object_stream[SessionMessage](),
+                    read_stream=(read_stream_recieve, read_stream_send),
+                    write_stream=(write_stream_receive, write_stream_send),
                 )
             else:
                 self._request_streams[request_id].refs += 1
@@ -447,15 +454,13 @@ class SessionServicer(Session.Servicer):
                             bytes=pickle.dumps(write_message),
                         )
 
-                        if (
-                            isinstance(
-                                write_message.message.root,
-                                types.JSONRPCError,
-                            ) or isinstance(
-                                write_message.message.root,
-                                types.JSONRPCResponse,
-                            )
-                        ):
+                        if (isinstance(
+                            write_message.message.root,
+                            types.JSONRPCError,
+                        ) or isinstance(
+                            write_message.message.root,
+                            types.JSONRPCResponse,
+                        )):
                             break
 
                 await at_least_once(
@@ -530,7 +535,8 @@ def mount(self, path, app):
     _mounts.append(value)
 
 
-reboot.aio.http.PythonWebFramework.HTTP.mount = mount
+# Monkey patch `mount`
+setattr(reboot.aio.http.PythonWebFramework.HTTP, "mount", mount)
 
 
 async def start(
@@ -644,5 +650,6 @@ async def start(
     else:
         return port
 
+
 # Monkey patch `start`.
-reboot.aio.http.PythonWebFramework.start = start
+setattr(reboot.aio.http.PythonWebFramework, "start", start)
