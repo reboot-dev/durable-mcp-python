@@ -1,10 +1,11 @@
 [project]
 name = "reboot-mcp"
 version = "0.1.0"
-requires-python = ">= 3.10"
+requires-python = ">= 3.12.11"
 dependencies = [
     "reboot==0.36.0",
     "mcp==1.13.1",
     "mypy==1.2.0",
+    "pytest==8.4.1",
     "types-protobuf>=4.24.0.20240129",
 ]
