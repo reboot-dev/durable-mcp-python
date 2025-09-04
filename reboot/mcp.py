@@ -88,7 +88,16 @@ class DurableMCP(fastmcp.FastMCP):
         """Overrides `FastMCP.add_tool`."""
         signature = inspect.signature(fn)
 
-        new_parameters = []
+        wrapper_parameters = [
+            # Always include the `context` parameter so we can access
+            # session specific things.
+            inspect.Parameter(
+                "ctx",
+                kind=inspect.Parameter.POSITIONAL_OR_KEYWORD,
+                annotation=fastmcp.Context,
+            )
+        ]
+
         context_parameter_names = []
 
         for parameter_name, parameter in signature.parameters.items():
@@ -105,25 +114,23 @@ class DurableMCP(fastmcp.FastMCP):
             ):
                 context_parameter_names.append(parameter_name)
             else:
-                new_parameters.append(parameter)
+                wrapper_parameters.append(parameter)
 
-        new_signature = signature.replace(parameters=new_parameters)
+        wrapper_signature = signature.replace(parameters=wrapper_parameters)
 
-        async def wrapper(*args, **kwargs):
-            bound = new_signature.bind(*args, **kwargs)
+        async def wrapper(ctx: fastmcp.Context, *args, **kwargs):
+            for context_parameter_name in context_parameter_names:
+                kwargs[context_parameter_name] = _context.get()
+
+            bound = signature.bind(*args, **kwargs)
             bound.apply_defaults()
 
-            # Fill in context args with None (or could be injected later).
-            bound_arguments = dict(bound.arguments)
-            for context_parameter_name in context_parameter_names:
-                bound_arguments[context_parameter_name] = _context.get()
-
             if fastmcp.tools.base._is_async_callable(fn):
-                return await fn(**bound_arguments)
+                return await fn(**dict(bound.arguments))
 
-            return fn(**bound_arguments)
+            return fn(**dict(bound.arguments))
 
-        setattr(wrapper, "__signature__", new_signature)
+        setattr(wrapper, "__signature__", wrapper_signature)
         wrapper.__name__ = fn.__name__
         wrapper.__doc__ = fn.__doc__
 
