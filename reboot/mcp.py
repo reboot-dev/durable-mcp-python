@@ -286,7 +286,7 @@ class StreamableHTTPASGIApp:
                         # and if we really want we could probably
                         # grab what is necessary and send if along
                         # in a picklable way.
-                        message.metadata.request_context = None
+                        message.metadata.request_context = None  # type: ignore
                         # TODO: ideally we spawn `HandleMessage`
                         # _before_ a 202 Accepted is sent.
                         await session.spawn().HandleMessage(
@@ -349,10 +349,10 @@ class StreamableHTTPASGIApp:
 @dataclass(kw_only=True)
 class Streams:
     refs: int
-    read_stream: tuple[MemoryObjectReceiveStream[SessionMessage | Exception],
-                       MemoryObjectSendStream[SessionMessage]]
-    write_stream: tuple[MemoryObjectReceiveStream[SessionMessage | Exception],
-                        MemoryObjectSendStream[SessionMessage]]
+    read_stream: tuple[MemoryObjectSendStream[SessionMessage | Exception],
+                       MemoryObjectReceiveStream[SessionMessage | Exception]]
+    write_stream: tuple[MemoryObjectSendStream[SessionMessage],
+                        MemoryObjectReceiveStream[SessionMessage]]
 
 
 class SessionServicer(Session.Servicer):
@@ -377,14 +377,11 @@ class SessionServicer(Session.Servicer):
         try:
             if request_id not in self._request_streams:
                 # Create streams for communicating with MCP server.
-                read_stream_receive, read_stream_send = create_memory_object_stream[
-                    SessionMessage | Exception]()
-                write_stream_receive, write_stream_send = create_memory_object_stream[
-                    SessionMessage]()
                 self._request_streams[request_id] = Streams(
                     refs=1,  # Initial reference count.
-                    read_stream=(read_stream_receive, read_stream_send),
-                    write_stream=(write_stream_receive, write_stream_send),
+                    read_stream=create_memory_object_stream[
+                        SessionMessage | Exception](),
+                    write_stream=create_memory_object_stream[SessionMessage](),
                 )
             else:
                 self._request_streams[request_id].refs += 1
