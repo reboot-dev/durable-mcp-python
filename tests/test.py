@@ -16,11 +16,11 @@ async def add(a: int, b: int, context: ToolContext) -> int:
     """Add two numbers and also store result in `SortedMap`."""
     # `ToolContext` can be used for making Reboot specific calls, can
     # also use `at_least_once`, `at_most_once`, `until`, etc!
-    await context.report_progress(progress=0.5, total=1.0)
     await SortedMap.ref("adds").Insert(
         context,
         entries={f"{a} + {b}": f"{a + b}".encode()},
     )
+    await context.report_progress(progress=0.5, total=1.0)
     return a + b
 
 

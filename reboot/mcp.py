@@ -42,10 +42,12 @@ from starlette.routing import Route
 from starlette.types import Receive, Scope, Send
 from types import MethodType
 from typing import Callable, Protocol, cast
-from uuid import uuid4
+from uuid import uuid4, uuid5
 
 
 class ToolContextProtocol(Protocol):
+
+    _event_ids: set[str]
 
     async def report_progress(
         self,
@@ -145,16 +147,69 @@ class DurableMCP(fastmcp.FastMCP):
             # already have.
             context.__class__ = ToolContext
 
+            context = cast(ToolContext, context)
+
             # Now we add the `ToolContextProtocol` properties.
+            context._event_ids = set()
+
             async def report_progress(
                 self,
                 progress: float,
                 total: float | None = None,
                 message: str | None = None,
             ) -> None:
-                await ctx.report_progress(progress, total, message)
+                progress_token = (
+                    ctx.request_context.meta.progressToken
+                    if ctx.request_context.meta else None
+                )
 
-            context.report_progress = MethodType(report_progress, context)  # type: ignore[attr-defined]
+                if progress_token is None:
+                    return
+
+                # TODO: consider checking if the progress has gone
+                # "down" and if so provide a nice error message to
+                # users.
+
+                # Generate a unique event ID that we'll both use to
+                # ensure that we don't send this event more than once.
+                assert context is not None
+                workflow_id = context.workflow_id
+                assert workflow_id is not None
+                event_id = uuid5(
+                    workflow_id,
+                    f"{progress}/{total}: {message}",
+                ).hex
+
+                if event_id in self._event_ids:
+                    raise TypeError(
+                        f"Looks like you're calling `report_progress()` "
+                        "more than once with the same arguments"
+                    )
+
+                self._event_ids.add(event_id)
+
+                await ctx.session.send_notification(
+                    types.ServerNotification(
+                        types.ProgressNotification(
+                            # TODO: figure out why `mypy` requires
+                            # passing `method` which has a default.
+                            method="notifications/progress",
+                            params=types.ProgressNotificationParams(
+                                progressToken=progress_token,
+                                progress=progress,
+                                total=total,
+                                message=message,
+                                _meta=types.NotificationParams.Meta(
+                                    rebootEventId=str(event_id)
+                                ),
+                            ),
+                        ),
+                    ),
+                )
+
+                # TODO: await event store storage
+
+            context.report_progress = MethodType(report_progress, context)  # type: ignore[method-assign]
 
             for context_parameter_name in context_parameter_names:
                 kwargs[context_parameter_name] = context
