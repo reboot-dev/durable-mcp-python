@@ -40,13 +40,27 @@ from starlette.requests import Request
 from starlette.responses import Response, StreamingResponse
 from starlette.routing import Route
 from starlette.types import Receive, Scope, Send
-from typing import Callable, Protocol
+from types import MethodType
+from typing import Callable, Protocol, cast
 from uuid import uuid4
 
 
 class ToolContextProtocol(Protocol):
 
-    pass
+    async def report_progress(
+        self,
+        progress: float,
+        total: float | None = None,
+        message: str | None = None,
+    ) -> None:
+        """Report progress for the current operation.
+
+        Args:
+            progress: Current progress value e.g. 24
+            total: Optional total value e.g. 100
+            message: Optional message e.g. Starting render...
+        """
+        ...
 
 
 class ToolContext(WorkflowContext, ToolContextProtocol):
@@ -119,8 +133,31 @@ class DurableMCP(fastmcp.FastMCP):
         wrapper_signature = signature.replace(parameters=wrapper_parameters)
 
         async def wrapper(ctx: fastmcp.Context, *args, **kwargs):
+
+            context: WorkflowContext | None = _context.get()
+
+            assert context is not None
+
+            # To account for the lack of "intersection" types in
+            # Python (which is actively being worked on), we instead
+            # create a new dynamic `ToolContext` instance that
+            # inherits from the instance of `WorkflowContext` that we
+            # already have.
+            context.__class__ = ToolContext
+
+            # Now we add the `ToolContextProtocol` properties.
+            async def report_progress(
+                self,
+                progress: float,
+                total: float | None = None,
+                message: str | None = None,
+            ) -> None:
+                await ctx.report_progress(progress, total, message)
+
+            context.report_progress = MethodType(report_progress, context)  # type: ignore[attr-defined]
+
             for context_parameter_name in context_parameter_names:
-                kwargs[context_parameter_name] = _context.get()
+                kwargs[context_parameter_name] = context
 
             bound = signature.bind(*args, **kwargs)
             bound.apply_defaults()

@@ -16,6 +16,7 @@ async def add(a: int, b: int, context: ToolContext) -> int:
     """Add two numbers and also store result in `SortedMap`."""
     # `ToolContext` can be used for making Reboot specific calls, can
     # also use `at_least_once`, `at_most_once`, `until`, etc!
+    await context.report_progress(progress=0.5, total=1.0)
     await SortedMap.ref("adds").Insert(
         context,
         entries={f"{a} + {b}": f"{a + b}".encode()},
@@ -42,6 +43,15 @@ class TestSomething(unittest.IsolatedAsyncioTestCase):
     async def test_mcp(self) -> None:
         await self.rbt.up(application, local_envoy=True)
 
+        async def progress_callback(
+            progress: float,
+            total: float | None,
+            message: str | None,
+        ) -> None:
+            assert total is not None
+            percentage = (progress / total) * 100
+            print(f"Progress: {progress}/{total} ({percentage:.1f}%)")
+
         async with streamablehttp_client(self.rbt.url() + "/mcp") as (
             read_stream,
             write_stream,
@@ -59,6 +69,7 @@ class TestSomething(unittest.IsolatedAsyncioTestCase):
                             "a": 5,
                             "b": 3
                         },
+                        progress_callback=progress_callback,
                     ),
                     session.call_tool(
                         "add",
@@ -66,6 +77,7 @@ class TestSomething(unittest.IsolatedAsyncioTestCase):
                             "a": 5,
                             "b": 4
                         },
+                        progress_callback=progress_callback,
                     ),
                 )
 
