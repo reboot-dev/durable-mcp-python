@@ -32,6 +32,11 @@ pytest tests/test.py
 ```
 
 ### TODO
-- [ ] `EventStore` support for resumability.
-- [ ] Enable calling `resource` and `prompt` using Reboot workflows.
-- [ ] Upgrade to latest Reboot and remove some of the monkey patches.
+- [ ] Pydantic `state` for each session
+- [ ] `EventStore` support for resumability
+- [ ] `elicit`
+- [ ] `sampling`
+- [ ] `progress`
+- [ ] Enable calling `resource` and `prompt` using Reboot workflows
+- [ ] Upgrade to latest Reboot and remove some of the monkey patches
+- [ ] Replace `print()` with `logger`
