@@ -8,6 +8,7 @@ from anyio.streams.memory import (
 )
 from contextlib import contextmanager
 from dataclasses import dataclass
+from log.log import get_logger
 from mcp.server.lowlevel.server import Server
 from mcp.shared.message import SessionMessage
 from rbt.mcp.v1.session_rbt import (
@@ -22,6 +23,8 @@ from reboot.aio.auth.authorizers import allow
 from reboot.aio.contexts import WorkflowContext, WriterContext
 from reboot.aio.workflows import at_least_once
 from reboot.mcp.event_store import get_event_id
+
+logger = get_logger(__name__)
 
 # Global of all of the MCP servers for calling `run()`.
 _mcp_servers: dict[str, Server] = {}
@@ -84,7 +87,7 @@ class SessionServicer(Session.Servicer):
         message = pickle.loads(request.message_bytes)
 
         if isinstance(message.message.root, mcp.types.JSONRPCRequest):
-            print(f"Handling ({type(message).__name__}): {message}")
+            logger.debug(f"Handling ({type(message).__name__}): {message}")
 
             request_id = message.message.root.id
 
@@ -107,7 +110,7 @@ class SessionServicer(Session.Servicer):
                     await read_stream_send.send(message)
 
                     async for write_message in write_stream_receive:
-                        print(
+                        logger.debug(
                             f"Sending message ({type(write_message).__name__}): "
                             f"{write_message}"
                         )
@@ -136,9 +139,9 @@ class SessionServicer(Session.Servicer):
 
                 await run_task
 
-                print(f"Completed ({type(message).__name__}): {message}")
+                logger.debug(f"Completed ({type(message).__name__}): {message}")
         else:
-            print(f"UNHANDLED MESSAGE ({type(message).__name__}): {message}")
+            logger.warning(f"UNIMPLEMENTED ({type(message).__name__}): {message}")
 
         return HandleMessageResponse()
 

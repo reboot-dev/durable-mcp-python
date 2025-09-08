@@ -2,8 +2,10 @@ import asyncio
 import functools
 import httpx
 import inspect
+import logging
 import mcp.types
 import pickle
+from log.log import get_logger, set_log_level
 from mcp.server import fastmcp
 from mcp.server.streamable_http import (
     MCP_SESSION_ID_HEADER,
@@ -28,8 +30,10 @@ from starlette.responses import Response, StreamingResponse
 from starlette.routing import Route
 from starlette.types import Receive, Scope, Send
 from types import MethodType
-from typing import Callable, Protocol, cast
+from typing import Callable, Literal, Protocol, cast
 from uuid import uuid4, uuid5
+
+logger = get_logger(__name__)
 
 
 class ToolContextProtocol(Protocol):
@@ -59,10 +63,16 @@ class ToolContext(WorkflowContext, ToolContextProtocol):
 
 class DurableMCP(fastmcp.FastMCP):
 
-    def __init__(self, *, path: str):
-        super().__init__()
+    def __init__(
+        self,
+        *,
+        path: str,
+        log_level: Literal["DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"] = "WARNING",
+    ):
+        super().__init__(log_level=log_level)
         self._path = path
         _mcp_servers[path] = self._mcp_server
+        set_log_level(logging.getLevelNamesMapping()[log_level])
 
     @property
     def path(self):
@@ -416,7 +426,7 @@ class StreamableHTTPASGIApp:
             except asyncio.CancelledError:
                 pass
             except Exception as e:
-                print(f"Session {mcp_session_id} crashed: {e}")
+                logger.warning(f"Session {mcp_session_id} crashed: {e}")
             finally:
                 if http_transport.is_terminated:
                     assert mcp_session_id in self._connect_tasks
