@@ -53,7 +53,7 @@ class TestSomething(unittest.IsolatedAsyncioTestCase):
         await self.rbt.stop()
 
     async def test_mcp(self) -> None:
-        revision = await self.rbt.up(application, local_envoy=True)
+        revision = await self.rbt.up(application)
 
         async def progress_callback(
             progress: float,
