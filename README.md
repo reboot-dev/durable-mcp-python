@@ -37,6 +37,7 @@ pytest tests/test.py
 - [ ] `elicit`
 - [ ] `sampling`
 - [ ] `progress`
+- [ ] Support cancellation notifications
 - [ ] Enable calling `resource` and `prompt` using Reboot workflows
 - [ ] Upgrade to latest Reboot and remove some of the monkey patches
 - [ ] Replace `print()` with `logger`
