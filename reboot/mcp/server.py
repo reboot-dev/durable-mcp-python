@@ -328,23 +328,22 @@ class StreamableHTTPASGIApp:
 
         mcp_session_id = request.headers.get(MCP_SESSION_ID_HEADER)
 
-        session_ref = request.headers.get(STATE_REF_HEADER)
-
-        assert session_ref is not None
-
-        session_id = StateRef.from_maybe_readable(session_ref).id
-
-        if mcp_session_id is not None:
-            assert mcp_session_id == session_id
-            assert mcp_session_id in self._http_transports
+        if (
+            mcp_session_id is not None and
+            mcp_session_id in self._http_transports
+        ):
             transport = self._http_transports[mcp_session_id]
             await transport.handle_request(scope, receive, send)
             return
 
-        # This is a new session but we need to use the session ID we
-        # already generated so all requests for it will get routed to
-        # this consensus.
-        mcp_session_id = session_id
+        # If this is a new session, i.e., `mcp_session_id is None`, we
+        # need to use the session ID we already generated so all
+        # requests for it will get routed to this consensus.
+        if mcp_session_id is None:
+            session_ref = request.headers.get(STATE_REF_HEADER)
+            assert session_ref is not None
+            session_id = StateRef.from_maybe_readable(session_ref).id
+            mcp_session_id = session_id
 
         http_transport = StreamableHTTPServerTransport(
             mcp_session_id=mcp_session_id,

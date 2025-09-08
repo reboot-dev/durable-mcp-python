@@ -115,6 +115,13 @@ class TestSomething(unittest.IsolatedAsyncioTestCase):
             except:
                 pass
 
+        print(f"Rebooting application running at {self.rbt.url()}...")
+
+        await self.rbt.down()
+        await self.rbt.up(revision=revision)
+
+        print(f"... application now at {self.rbt.url()}")
+
         assert session_id is not None
         assert protocol_version is not None
 
