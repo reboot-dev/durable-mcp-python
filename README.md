@@ -70,6 +70,4 @@ pytest tests/test.py
 - [ ] Docs
 - [ ] `yapf`
 - [ ] Push to `reboot-mcp` in pypi.org
-- [ ] Add `logger`
 - [ ] Pydantic `state` for each session
-- [ ] Turn off Reboot logging by default?
