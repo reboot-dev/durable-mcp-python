@@ -3,7 +3,7 @@ name = "reboot-mcp"
 version = "0.1.0"
 requires-python = ">= 3.12.11"
 dependencies = [
-    "reboot==0.36.0",
+    "reboot==0.37.1",
     "mcp==1.13.1",
     "mypy==1.2.0",
     "pytest==8.4.1",

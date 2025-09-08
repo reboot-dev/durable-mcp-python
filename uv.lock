@@ -404,6 +404,28 @@ wheels = [
 ]
 
 [[package]]
+name = "h2"
+version = "4.3.0"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "hpack" },
+    { name = "hyperframe" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/1d/17/afa56379f94ad0fe8defd37d6eb3f89a25404ffc71d4d848893d270325fc/h2-4.3.0.tar.gz", hash = "sha256:6c59efe4323fa18b47a632221a1888bd7fde6249819beda254aeca909f221bf1", size = 2152026, upload-time = "2025-08-23T18:12:19.778Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/69/b2/119f6e6dcbd96f9069ce9a2665e0146588dc9f88f29549711853645e736a/h2-4.3.0-py3-none-any.whl", hash = "sha256:c438f029a25f7945c69e0ccf0fb951dc3f73a5f6412981daee861431b70e2bdd", size = 61779, upload-time = "2025-08-23T18:12:17.779Z" },
+]
+
+[[package]]
+name = "hpack"
+version = "4.1.0"
+source = { registry = "https://pypi.org/simple" }
+sdist = { url = "https://files.pythonhosted.org/packages/2c/48/71de9ed269fdae9c8057e5a4c0aa7402e8bb16f2c6e90b3aa53327b113f8/hpack-4.1.0.tar.gz", hash = "sha256:ec5eca154f7056aa06f196a557655c5b009b382873ac8d1e66e79e87535f1dca", size = 51276, upload-time = "2025-01-22T21:44:58.347Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/07/c6/80c95b1b2b94682a72cbdbfb85b81ae2daffa4291fbfa1b1464502ede10d/hpack-4.1.0-py3-none-any.whl", hash = "sha256:157ac792668d995c657d93111f46b4535ed114f0c9c8d672271bbec7eae1b496", size = 34357, upload-time = "2025-01-22T21:44:56.92Z" },
+]
+
+[[package]]
 name = "httpcore"
 version = "1.0.9"
 source = { registry = "https://pypi.org/simple" }
@@ -438,6 +460,15 @@ source = { registry = "https://pypi.org/simple" }
 sdist = { url = "https://files.pythonhosted.org/packages/6e/fa/66bd985dd0b7c109a3bcb89272ee0bfb7e2b4d06309ad7b38ff866734b2a/httpx_sse-0.4.1.tar.gz", hash = "sha256:8f44d34414bc7b21bf3602713005c5df4917884f76072479b21f68befa4ea26e", size = 12998, upload-time = "2025-06-24T13:21:05.71Z" }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/25/0a/6269e3473b09aed2dab8aa1a600c70f31f00ae1349bee30658f7e358a159/httpx_sse-0.4.1-py3-none-any.whl", hash = "sha256:cba42174344c3a5b06f255ce65b350880f962d99ead85e776f23c6618a377a37", size = 8054, upload-time = "2025-06-24T13:21:04.772Z" },
+]
+
+[[package]]
+name = "hyperframe"
+version = "6.1.0"
+source = { registry = "https://pypi.org/simple" }
+sdist = { url = "https://files.pythonhosted.org/packages/02/e7/94f8232d4a74cc99514c13a9f995811485a6903d48e5d952771ef6322e30/hyperframe-6.1.0.tar.gz", hash = "sha256:f630908a00854a7adeabd6382b43923a4c4cd4b821fcb527e6ab9e15382a3b08", size = 26566, upload-time = "2025-01-22T21:41:49.302Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/48/30/47d0bf6072f7252e6521f3447ccfa40b421b6824517f82854703d0f5a98b/hyperframe-6.1.0-py3-none-any.whl", hash = "sha256:b03380493a519fce58ea5af42e4a42317bf9bd425596f7a0835ffce80f1a42e5", size = 13007, upload-time = "2025-01-22T21:41:47.295Z" },
 ]
 
 [[package]]
@@ -1118,7 +1149,7 @@ wheels = [
 
 [[package]]
 name = "reboot"
-version = "0.36.0"
+version = "0.37.1"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "aiofiles" },
@@ -1134,6 +1165,7 @@ dependencies = [
     { name = "grpcio-reflection" },
     { name = "grpcio-status" },
     { name = "grpcio-tools" },
+    { name = "h2" },
     { name = "jinja2" },
     { name = "jinja2-strcase" },
     { name = "kubernetes-asyncio" },
@@ -1161,10 +1193,10 @@ dependencies = [
     { name = "websockets" },
 ]
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/36/46/b0fab4e6e1dc63db7c890b73098aeb742a377f4e27f6f376ce336d8ffe5a/reboot-0.36.0-py3-none-macosx_13_0_arm64.whl", hash = "sha256:031ef5c278b40a6184e2f61f96582caa04221d9199ea265e48eda0048f645c2d", size = 12404711, upload-time = "2025-08-27T22:23:36.383Z" },
-    { url = "https://files.pythonhosted.org/packages/46/d4/1dc5a30a4f91a169799eefe21a0f5f88334316fdf1caa2f64b56942293f2/reboot-0.36.0-py3-none-macosx_13_0_x86_64.whl", hash = "sha256:efd74727d460c131502ee92e91b83627e56e0fa62cabf9d74a83dbc5bd9fc71e", size = 12334446, upload-time = "2025-08-27T22:49:44.881Z" },
-    { url = "https://files.pythonhosted.org/packages/30/04/f79b7ebe9f589055b01d9fec31c47286e24439308363d633191e4ca81775/reboot-0.36.0-py3-none-manylinux_2_31_aarch64.whl", hash = "sha256:3d2251fd084327a898bb3554a6bc0b2593c05751e8a451668348ee2bb91b3bb4", size = 14768206, upload-time = "2025-08-27T22:17:33.01Z" },
-    { url = "https://files.pythonhosted.org/packages/f1/7d/1f3834c0939a7749a9d17f1d3df491953d5f2fe662ec631c8f78224b9b86/reboot-0.36.0-py3-none-manylinux_2_31_x86_64.whl", hash = "sha256:8c37bb9e5750cd71cac206f1af255e3ca07d8293de1d5ab11a60e1308ebd73ec", size = 14714749, upload-time = "2025-08-27T22:17:49.771Z" },
+    { url = "https://files.pythonhosted.org/packages/db/2c/21526c715640778195d4969567a83a8754133b529d0d9bd3277fd060fb8b/reboot-0.37.1-py3-none-macosx_13_0_arm64.whl", hash = "sha256:1ca1e7cf3856ac532191fa4d5cd6778529e2ee675732460eb36e3dd8c5d8734a", size = 12408125, upload-time = "2025-09-05T02:24:07.067Z" },
+    { url = "https://files.pythonhosted.org/packages/a1/3d/eb61617bfb3d1cf7813ee4bb6a32f90303ee64712ce74f613f585e081db3/reboot-0.37.1-py3-none-macosx_13_0_x86_64.whl", hash = "sha256:ae31b02c7b630a7643f4e5c213c366c32d04b92e1149688860e29b093465067b", size = 12336509, upload-time = "2025-09-05T02:53:15.326Z" },
+    { url = "https://files.pythonhosted.org/packages/8a/b5/98ec6dcbe6d83eb9a9f313166d45fa008f7e80d1e312e85bd5b5cfb8a6db/reboot-0.37.1-py3-none-manylinux_2_31_aarch64.whl", hash = "sha256:cbe09270c0356b2e5a06659a9984717003b82d3bdc0761897ef20fc948fcf929", size = 14772802, upload-time = "2025-09-05T02:16:03.131Z" },
+    { url = "https://files.pythonhosted.org/packages/5a/39/453e7fb2849fc6b4af4c302d8365ec5ae9e2bd629aa554b69ca61c25462a/reboot-0.37.1-py3-none-manylinux_2_31_x86_64.whl", hash = "sha256:43319c679a1ad85bf72cc0bc5216052f85d4c12cdda74db8447506dc7eb9f18e", size = 14718418, upload-time = "2025-09-05T02:15:45.939Z" },
 ]
 
 [[package]]
@@ -1184,7 +1216,7 @@ requires-dist = [
     { name = "mcp", specifier = "==1.13.1" },
     { name = "mypy", specifier = "==1.2.0" },
     { name = "pytest", specifier = "==8.4.1" },
-    { name = "reboot", specifier = "==0.36.0" },
+    { name = "reboot", specifier = "==0.37.1" },
     { name = "types-protobuf", specifier = ">=4.24.0.20240129" },
 ]
 

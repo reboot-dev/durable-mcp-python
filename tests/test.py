@@ -40,7 +40,7 @@ async def set_resume() -> None:
 application = Application(servicers=mcp.servicers())
 
 # Mounts the server at the path specified.
-application.http.mount(mcp.path, mcp.streamable_http_app())  # type: ignore
+application.http.mount(mcp.path, factory=mcp.streamable_http_app_factory)
 
 
 class TestSomething(unittest.IsolatedAsyncioTestCase):
