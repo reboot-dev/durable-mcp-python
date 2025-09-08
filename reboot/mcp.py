@@ -2,6 +2,7 @@ import asyncio
 import functools
 import httpx
 import inspect
+import mcp.server.streamable_http
 import pickle
 from anyio import create_memory_object_stream
 from anyio.streams.memory import (
@@ -15,24 +16,29 @@ from mcp import types
 from mcp.server import fastmcp
 from mcp.server.streamable_http import (
     MCP_SESSION_ID_HEADER,
+    EventId,
     StreamableHTTPServerTransport,
 )
 from mcp.shared.message import SessionMessage
 from rbt.mcp.v1.session_rbt import (
-    CreateRequest,
-    CreateResponse,
     HandleMessageRequest,
     HandleMessageResponse,
     RunRequest,
     RunResponse,
     Session,
+    Stream,
 )
 from reboot.aio.auth.authorizers import allow
 from reboot.aio.contexts import WorkflowContext, WriterContext
 from reboot.aio.external import ExternalContext
 from reboot.aio.types import StateRef
 from reboot.aio.workflows import at_least_once
-from reboot.std.collections.queue.v1.queue import Queue, QueueServicer
+from reboot.event_store import (
+    DurableEventStore,
+    StreamServicer,
+    get_event_id,
+    replay,
+)
 from reboot.std.collections.v1 import sorted_map
 from rebootdev.aio.headers import CONSENSUS_ID_HEADER, STATE_REF_HEADER
 from starlette.applications import Starlette
@@ -47,7 +53,7 @@ from uuid import uuid4, uuid5
 
 class ToolContextProtocol(Protocol):
 
-    _event_ids: set[str]
+    _event_aliases: set[str]
 
     async def report_progress(
         self,
@@ -90,7 +96,7 @@ class DurableMCP(fastmcp.FastMCP):
         return self._path
 
     def servicers(self):
-        return [SessionServicer, QueueServicer] + sorted_map.servicers()
+        return [SessionServicer, StreamServicer] + sorted_map.servicers()
 
     def add_tool(
         self,
@@ -150,7 +156,7 @@ class DurableMCP(fastmcp.FastMCP):
             context = cast(ToolContext, context)
 
             # Now we add the `ToolContextProtocol` properties.
-            context._event_ids = set()
+            context._event_aliases = set()
 
             async def report_progress(
                 self,
@@ -166,27 +172,34 @@ class DurableMCP(fastmcp.FastMCP):
                 if progress_token is None:
                     return
 
-                # TODO: consider checking if the progress has gone
-                # "down" and if so provide a nice error message to
-                # users.
+                # TODO: consider tracking all reported progress and if
+                # it has gone "backwards" provide a nice error so
+                # developers can fix their bug (presumably they don't
+                # ever want the progress to go "backwards").
 
-                # Generate a unique event ID that we'll both use to
-                # ensure that we don't send this event more than once.
-                assert context is not None
-                workflow_id = context.workflow_id
-                assert workflow_id is not None
-                event_id = uuid5(
-                    workflow_id,
-                    f"{progress}/{total}: {message}",
-                ).hex
+                event_alias = (
+                    f"report_progress(progress={progress}, total={total}, "
+                    f"message={message})"
+                )
 
-                if event_id in self._event_ids:
+                if event_alias in self._event_aliases:
                     raise TypeError(
                         f"Looks like you're calling `report_progress()` "
                         "more than once with the same arguments"
                     )
 
-                self._event_ids.add(event_id)
+                self._event_aliases.add(event_alias)
+
+                assert context is not None
+
+                workflow_id = context.workflow_id
+
+                assert workflow_id is not None
+
+                # Generate a unique but deterministic ID for this
+                # event based on the alias and this workflow (which is
+                # unique per request).
+                event_id = uuid5(workflow_id, event_alias).hex
 
                 await ctx.session.send_notification(
                     types.ServerNotification(
@@ -200,14 +213,13 @@ class DurableMCP(fastmcp.FastMCP):
                                 total=total,
                                 message=message,
                                 _meta=types.NotificationParams.Meta(
-                                    rebootEventId=str(event_id)
+                                    rebootEventId=str(event_id),
                                 ),
                             ),
                         ),
                     ),
+                    related_request_id=ctx.request_id,
                 )
-
-                # TODO: await event store storage
 
             context.report_progress = MethodType(report_progress, context)  # type: ignore[method-assign]
 
@@ -353,16 +365,11 @@ class StreamableHTTPASGIApp:
         http_transport = StreamableHTTPServerTransport(
             mcp_session_id=mcp_session_id,
             is_json_response_enabled=False,
-            event_store=None,
+            event_store=DurableEventStore(context),
             security_settings=None,
         )
 
         session = Session.ref(mcp_session_id)
-
-        # Ensure the session has been created.
-        create = await session.Create(context)
-
-        session_write_queue = Queue.ref(create.write_queue_id)
 
         self._http_transports[mcp_session_id] = http_transport
 
@@ -373,6 +380,8 @@ class StreamableHTTPASGIApp:
             async with http_transport.connect() as streams:
                 started.set()
                 read_stream, write_stream = streams
+
+                writer_tasks: list[asyncio.Task] = []
 
                 async def reader():
                     async for message in read_stream:
@@ -394,31 +403,34 @@ class StreamableHTTPASGIApp:
                             message_bytes=pickle.dumps(message),
                         )
 
-                async def writer():
-                    while True:
-                        dequeue = await session_write_queue.Dequeue(
-                            context,
-                            bulk=True,
-                        )
-                        messages = [
-                            pickle.loads(item.bytes) for item in dequeue.items
-                        ]
-                        for message in messages:
-                            await write_stream.send(message)
+                        if not isinstance(message, Exception) and isinstance(
+                            message.message.root,
+                            types.JSONRPCRequest,
+                        ):
+                            request_id = message.message.root.id
+
+                            async def writer():
+                                async for message, _ in replay(
+                                    context,
+                                    stream_id=str(request_id),
+                                ):
+                                    await write_stream.send(message)
+
+                            writer_tasks.append(asyncio.create_task(writer()))
 
                 reader_task = asyncio.create_task(reader())
-                writer_task = asyncio.create_task(writer())
 
                 try:
                     # Await the reader first, since it will be
                     # finished once the session is finished, then
-                    # we can cancel the writer.
+                    # we can cancel any writers.
                     await reader_task
                 finally:
                     reader_task.cancel()
-                    writer_task.cancel()
+                    for writer_task in writer_tasks:
+                        writer_task.cancel()
                     await asyncio.wait(
-                        [reader_task, writer_task],
+                        [reader_task] + writer_tasks,
                         return_when=asyncio.ALL_COMPLETED,
                     )
 
@@ -462,15 +474,6 @@ class SessionServicer(Session.Servicer):
     def authorizer(self):
         return allow()
 
-    async def Create(
-        self,
-        context: WriterContext,
-        request: CreateRequest,
-    ) -> CreateResponse:
-        return CreateResponse(
-            write_queue_id=self._write_queue.state_id,
-        )
-
     @contextmanager
     def _get_request_streams(self, request_id: types.RequestId):
         try:
@@ -508,6 +511,8 @@ class SessionServicer(Session.Servicer):
 
             request_id = message.message.root.id
 
+            stream = Stream.ref(str(request_id))
+
             with self._get_request_streams(
                 request_id,
             ) as (read_stream, write_stream):
@@ -530,33 +535,17 @@ class SessionServicer(Session.Servicer):
                             f"{write_message}"
                         )
 
-                        # TODO: support retrying tools in the event of
-                        # an exception, possibly by needing to set
-                        # `raise_exceptions=True` when we call
-                        # `server.run()` in `Run` so that we only
-                        # return an error if a `ToolAborted` /
-                        # `RequestAborted` is raised.
-                        #
-                        # TODO: if `write_message` is a `JSONRPCError`
-                        # or a `JSONRPCResponse` add an idempotency
-                        # key in metadata of `SessionMessage` and wait
-                        # until `EventStore` has received the message
-                        # before we `break` below (`EventStore` will
-                        # deduplicate).
+                        event_id = get_event_id(write_message)
 
-                        await self._write_queue.always().Enqueue(
+                        await stream.per_workflow(event_id).Put(
                             context,
-                            bytes=pickle.dumps(write_message),
+                            event_id=event_id,
+                            message_bytes=pickle.dumps(write_message),
                         )
 
-                        if (
-                            isinstance(
-                                write_message.message.root,
-                                types.JSONRPCError,
-                            ) or isinstance(
-                                write_message.message.root,
-                                types.JSONRPCResponse,
-                            )
+                        if isinstance(
+                            write_message.message.root,
+                            types.JSONRPCResponse | types.JSONRPCError,
                         ):
                             break
 
@@ -602,22 +591,23 @@ class SessionServicer(Session.Servicer):
                         read_stream_receive,
                         write_stream_send,
                         server.create_initialization_options(),
+                        raise_exceptions=True,
                         # Since we might resume we set `stateless=True`
                         # because we don't want the server to need to do
                         # initialization, but it will happily do it when the
                         # client does it on connect.
                         stateless=True,
                     )
+                except:
+                    import traceback
+                    traceback.print_exc()
+                    raise
                 finally:
                     _context.set(None)
 
             await at_least_once("Server run", context, server_run)
 
             return RunResponse()
-
-    @property
-    def _write_queue(self):
-        return Queue.ref(f"{self.ref().state_id}/write_queue")
 
 
 # TODO: remove this once we release reboot==0.37.0.

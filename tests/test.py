@@ -1,11 +1,16 @@
 import asyncio
 import unittest
-from mcp import ClientSession, types
-from mcp.client.streamable_http import streamablehttp_client
+from mcp import types
+from mcp.shared.message import ClientMessageMetadata
+from mcp.shared.session import RequestResponder
 from reboot.aio.applications import Application
 from reboot.aio.tests import Reboot
 from reboot.mcp import DurableMCP, ToolContext
 from reboot.std.collections.v1.sorted_map import SortedMap
+from tests.client import connect, resume
+
+report_progress_event = asyncio.Event()
+resume_event = asyncio.Event()
 
 # `DurableMCP` server which will handle HTTP requests at path "/mcp".
 mcp = DurableMCP(path="/mcp")
@@ -21,7 +26,14 @@ async def add(a: int, b: int, context: ToolContext) -> int:
         entries={f"{a} + {b}": f"{a + b}".encode()},
     )
     await context.report_progress(progress=0.5, total=1.0)
+    await resume_event.wait()
     return a + b
+
+
+@mcp.tool()
+async def set_resume() -> None:
+    resume_event.set()
+    return None
 
 
 # Reboot application that runs everything necessary for `DurableMCP`.
@@ -41,7 +53,7 @@ class TestSomething(unittest.IsolatedAsyncioTestCase):
         await self.rbt.stop()
 
     async def test_mcp(self) -> None:
-        await self.rbt.up(application, local_envoy=True)
+        revision = await self.rbt.up(application, local_envoy=True)
 
         async def progress_callback(
             progress: float,
@@ -51,50 +63,115 @@ class TestSomething(unittest.IsolatedAsyncioTestCase):
             assert total is not None
             percentage = (progress / total) * 100
             print(f"Progress: {progress}/{total} ({percentage:.1f}%)")
+            report_progress_event.set()
 
-        async with streamablehttp_client(self.rbt.url() + "/mcp") as (
-            read_stream,
-            write_stream,
-            _,
-        ):
-            # Create a session using the client streams.
-            async with ClientSession(read_stream, write_stream) as session:
-                # Initialize the connection.
-                await session.initialize()
+        session_id = None
+        protocol_version = None
+        last_event_id = None
 
-                results = await asyncio.gather(
-                    session.call_tool(
-                        "add",
-                        arguments={
-                            "a": 5,
-                            "b": 3
-                        },
-                        progress_callback=progress_callback,
+        async with connect(
+            self.rbt.url() + "/mcp",
+            terminate_on_close=False,
+        ) as (session, get_session_id):
+            result = await session.initialize()
+            assert isinstance(result, types.InitializeResult)
+            session_id = get_session_id()
+            protocol_version = result.protocolVersion
+
+            async def on_resumption_token_update(token: str) -> None:
+                nonlocal last_event_id
+                last_event_id = token
+
+            send_request_task = asyncio.create_task(
+                session.send_request(
+                    types.ClientRequest(
+                        types.CallToolRequest(
+                            method="tools/call",
+                            params=types.CallToolRequestParams(
+                                name="add",
+                                arguments={
+                                    "a": 5,
+                                    "b": 3
+                                },
+                            ),
+                        ),
                     ),
-                    session.call_tool(
-                        "add",
-                        arguments={
-                            "a": 5,
-                            "b": 4
-                        },
-                        progress_callback=progress_callback,
+                    types.CallToolResult,
+                    metadata=ClientMessageMetadata(
+                        on_resumption_token_update=on_resumption_token_update,
                     ),
+                    progress_callback=progress_callback,
                 )
+            )
 
-                for result in results:
-                    result_unstructured = result.content[0]
-                    if isinstance(result_unstructured, types.TextContent):
-                        print(f"Tool result: {result_unstructured.text}")
-                    result_structured = result.structuredContent
-                    print(f"Structured tool result: {result_structured}")
+            await report_progress_event.wait()
 
-        context = self.rbt.create_external_context(
-            name=self.id(),
-            app_internal=True,
-        )
+            while last_event_id == None:
+                await asyncio.sleep(0.01)
 
-        response = await SortedMap.ref("adds").Range(context, limit=2)
-        print(response)
+            send_request_task.cancel()
+            try:
+                await send_request_task
+            except:
+                pass
+
+        assert session_id is not None
+        assert protocol_version is not None
+
+        async with resume(
+            self.rbt.url() + "/mcp",
+            session_id=session_id,
+            protocol_version=protocol_version,
+            # MCP bug: need to start using the "next" request ID in
+            # the session as required by the spec:
+            # modelcontextprotocol.io/specification/2025-06-18/basic#requests
+            next_request_id=session._request_id,
+        ) as session:
+
+            await session.send_request(
+                types.ClientRequest(
+                    types.CallToolRequest(
+                        method="tools/call",
+                        params=types.CallToolRequestParams(
+                            name="set_resume",
+                            arguments={},
+                        ),
+                    ),
+                ),
+                types.CallToolResult,
+            )
+
+            assert last_event_id is not None
+
+            result = await session.send_request(
+                types.ClientRequest(
+                    types.CallToolRequest(
+                        method="tools/call",
+                        params=types.CallToolRequestParams(
+                            name="add",
+                            arguments={
+                                "a": 5,
+                                "b": 3
+                            },
+                        ),
+                    ),
+                ),
+                # TODO: figure out why `mypy` fails here.
+                types.CallToolResult,  # type: ignore[arg-type]
+                metadata=ClientMessageMetadata(
+                    resumption_token=last_event_id,
+                ),
+            )
+
+            print(result)
+
+            context = self.rbt.create_external_context(
+                name=self.id(),
+                app_internal=True,
+            )
+
+            response = await SortedMap.ref("adds").Range(context, limit=2)
+            print(response)
 
 
 if __name__ == '__main__':
