@@ -30,7 +30,7 @@ from starlette.responses import Response, StreamingResponse
 from starlette.routing import Route
 from starlette.types import Receive, Scope, Send
 from types import MethodType
-from typing import Callable, Literal, Protocol, cast
+from typing import Any, Callable, Literal, Protocol, cast
 from uuid import uuid4, uuid5
 
 logger = get_logger(__name__)
@@ -53,6 +53,39 @@ class ToolContextProtocol(Protocol):
             total: Optional total value e.g. 100
             message: Optional message e.g. Starting render...
         """
+        ...
+
+    async def log(
+        self,
+        level: Literal["debug", "info", "warning", "error"],
+        message: str,
+        *,
+        logger_name: str | None = None,
+    ) -> None:
+        """Send a log message to the client.
+
+        Args:
+            level: Log level (debug, info, warning, error)
+            message: Log message
+            logger_name: Optional logger name
+            **data: Additional structured data to include
+        """
+        ...
+
+    async def debug(self, message: str) -> None:
+        """Send a debug log message."""
+        ...
+
+    async def info(self, message: str) -> None:
+        """Send an info log message."""
+        ...
+
+    async def warning(self, message: str) -> None:
+        """Send a warning log message."""
+        ...
+
+    async def error(self, message: str) -> None:
+        """Send an error log message."""
         ...
 
 
@@ -165,6 +198,11 @@ class DurableMCP(fastmcp.FastMCP):
                     f"message={message})"
                 )
 
+                assert context is not None
+
+                if context.within_loop():
+                    event_alias += f" #{context.task.iteration}"
+
                 if event_alias in self._event_aliases:
                     raise TypeError(
                         f"Looks like you're calling `report_progress()` "
@@ -172,8 +210,6 @@ class DurableMCP(fastmcp.FastMCP):
                     )
 
                 self._event_aliases.add(event_alias)
-
-                assert context is not None
 
                 workflow_id = context.workflow_id
 
@@ -205,6 +241,80 @@ class DurableMCP(fastmcp.FastMCP):
                 )
 
             context.report_progress = MethodType(report_progress, context)  # type: ignore[method-assign]
+
+            async def log(
+                self,
+                level: Literal["debug", "info", "warning", "error"],
+                message: str,
+                *,
+                logger_name: str | None = None,
+            ) -> None:
+                event_alias = (
+                    f"log(level='{level}', message='{message}', logger_name={logger_name})"
+                )
+
+                assert context is not None
+
+                if context.within_loop():
+                    event_alias += f" #{context.task.iteration}"
+
+                if event_alias in self._event_aliases:
+                    raise TypeError(
+                        "Looks like you're trying to `log()` "
+                        "more than once with the same arguments"
+                    )
+
+                self._event_aliases.add(event_alias)
+
+                workflow_id = context.workflow_id
+
+                assert workflow_id is not None
+
+                # Generate a unique but deterministic ID for this
+                # event based on the alias and this workflow (which is
+                # unique per request).
+                event_id = uuid5(workflow_id, event_alias).hex
+
+                await ctx.session.send_notification(
+                    mcp.types.ServerNotification(
+                        mcp.types.LoggingMessageNotification(
+                            # TODO: figure out why `mypy` requires
+                            # passing `method` which has a default.
+                            method="notifications/message",
+                            params=mcp.types.LoggingMessageNotificationParams(
+                                level=level,
+                                data=message,
+                                logger=logger_name,
+                                _meta=mcp.types.NotificationParams.Meta(
+                                    rebootEventId=str(event_id),
+                                ),
+                            ),
+                        )
+                    ),
+                    related_request_id=ctx.request_id,
+                )
+
+            context.log = MethodType(log, context)  # type: ignore[method-assign]
+
+            async def debug(self, message: str) -> None:
+                await self.log("debug", message)
+
+            context.debug = MethodType(debug, context)  # type: ignore[method-assign]
+
+            async def info(self, message: str) -> None:
+                await self.log("info", message)
+
+            context.info = MethodType(info, context)  # type: ignore[method-assign]
+
+            async def warning(self, message: str) -> None:
+                await self.log("warning", message)
+
+            context.warning = MethodType(warning, context)  # type: ignore[method-assign]
+
+            async def error(self, message: str) -> None:
+                await self.log("error", message)
+
+            context.error = MethodType(error, context)  # type: ignore[method-assign]
 
             for context_parameter_name in context_parameter_names:
                 kwargs[context_parameter_name] = context

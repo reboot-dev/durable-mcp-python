@@ -7,6 +7,7 @@ import httpx
 import mcp
 import mcp.types
 from contextlib import asynccontextmanager
+from mcp.client.session import MessageHandlerFnT
 from mcp.client.streamable_http import streamablehttp_client
 from mcp.server.streamable_http import (
     MCP_PROTOCOL_VERSION_HEADER,
@@ -49,6 +50,7 @@ async def connect(
     *,
     headers: dict[str, str] | None = None,
     terminate_on_close: bool = True,
+    message_handler: MessageHandlerFnT | None = None,
 ) -> AsyncIterator[tuple[mcp.ClientSession, Callable[[], str | None]]]:
     async with streamablehttp_client(
         url,
@@ -56,7 +58,11 @@ async def connect(
         terminate_on_close=terminate_on_close,
         httpx_client_factory=create_mcp_http_client,
     ) as (read_stream, write_stream, get_session_id):
-        async with mcp.ClientSession(read_stream, write_stream) as session:
+        async with mcp.ClientSession(
+            read_stream,
+            write_stream,
+            message_handler=message_handler,
+        ) as session:
             yield session, get_session_id
 
 
@@ -68,6 +74,7 @@ async def reconnect(
     protocol_version: str | int,
     next_request_id: int,
     terminate_on_close: bool = True,
+    message_handler: MessageHandlerFnT | None = None,
 ) -> AsyncIterator[mcp.ClientSession]:
     headers: dict[str, Any] = {}
     headers[MCP_SESSION_ID_HEADER] = session_id
@@ -76,6 +83,7 @@ async def reconnect(
         url,
         headers=headers,
         terminate_on_close=terminate_on_close,
+        message_handler=message_handler,
     ) as (session, _):
         session._request_id = next_request_id
         yield session

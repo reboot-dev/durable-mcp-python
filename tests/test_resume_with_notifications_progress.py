@@ -2,14 +2,12 @@ import asyncio
 import unittest
 from mcp import types
 from mcp.shared.message import ClientMessageMetadata
-from mcp.shared.session import RequestResponder
 from reboot.aio.applications import Application
 from reboot.aio.tests import Reboot
 from reboot.mcp.client import connect, reconnect
 from reboot.mcp.server import DurableMCP, ToolContext
 from reboot.std.collections.v1.sorted_map import SortedMap
 
-report_progress_event = asyncio.Event()
 finish_event = asyncio.Event()
 
 # `DurableMCP` server which will handle HTTP requests at path "/mcp".
@@ -54,6 +52,8 @@ class TestSomething(unittest.IsolatedAsyncioTestCase):
 
     async def test_mcp(self) -> None:
         revision = await self.rbt.up(application)
+
+        report_progress_event = asyncio.Event()
 
         async def progress_callback(
             progress: float,

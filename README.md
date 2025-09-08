@@ -55,7 +55,7 @@ pytest tests/test.py
 
 ### TODO client <-- server _notifications_:
 - [x] `notifications/progress`
-- [ ] `notifications/message`
+- [x] `notifications/message`
 - [ ] `notifications/prompts/list_changed`
 - [ ] `notifications/resources/list_changed`
 - [ ] `notifications/resources/updated`
