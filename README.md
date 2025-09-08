@@ -31,13 +31,42 @@ And run the test(s):
 pytest tests/test.py
 ```
 
-### TODO
+### TODO client --> server _requests_:
+- [x] `initialize`
+- [x] `tools/call`
+- [x] `tools/list`
+- [ ] `prompts/get`
+- [ ] `prompts/list`
+- [ ] `resources/list`
+- [ ] `resources/read`
+- [ ] `resources/subscribe`
+- [ ] `resources/unsubscribe`
+- [ ] `resources/templates/list`
+- [ ] `completion/complete`
+- [ ] `logging/setLevel`
+
+### TODO client --> server _notifications_:
+- [ ] `notifications/initialized`
+
+### TODO client <-- server _requests_:
+- [ ] `elicitation/create`
+- [ ] `roots/list`
+- [ ] `sampling/createMessage`
+
+### TODO client <-- server _notifications_:
+- [x] `notifications/progress`
+- [ ] `notifications/message`
+- [ ] `notifications/prompts/list_changed`
+- [ ] `notifications/resources/list_changed`
+- [ ] `notifications/resources/updated`
+- [ ] `notifications/roots/list_changed`
+- [ ] `notifications/tools/list_changed`
+
+### TODO client <--> server _notifications_:
+- [ ] `notifications/cancelled`
+
+### TODO miscellaneous:
+- [x] `EventStore` support for resumability
 - [ ] Pydantic `state` for each session
-- [ ] `EventStore` support for resumability
-- [ ] `elicit`
-- [ ] `sampling`
-- [ ] `progress`
-- [ ] Support cancellation notifications
-- [ ] Enable calling `resource` and `prompt` using Reboot workflows
-- [ ] Upgrade to latest Reboot and remove some of the monkey patches
-- [ ] Replace `print()` with `logger`
+- [ ] Add `logger`
+- [ ] Turn off Reboot logging by default?
