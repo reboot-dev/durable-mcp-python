@@ -67,6 +67,9 @@ pytest tests/test.py
 
 ### TODO miscellaneous:
 - [x] `EventStore` support for resumability
-- [ ] Pydantic `state` for each session
+- [ ] Docs
+- [ ] `yapf`
+- [ ] Push to `reboot-mcp` in pypi.org
 - [ ] Add `logger`
+- [ ] Pydantic `state` for each session
 - [ ] Turn off Reboot logging by default?
