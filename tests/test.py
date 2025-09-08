@@ -5,9 +5,9 @@ from mcp.shared.message import ClientMessageMetadata
 from mcp.shared.session import RequestResponder
 from reboot.aio.applications import Application
 from reboot.aio.tests import Reboot
-from reboot.mcp import DurableMCP, ToolContext
+from reboot.mcp.client import connect, reconnect
+from reboot.mcp.server import DurableMCP, ToolContext
 from reboot.std.collections.v1.sorted_map import SortedMap
-from tests.client import connect, reconnect
 
 report_progress_event = asyncio.Event()
 finish_event = asyncio.Event()
@@ -26,7 +26,7 @@ async def add(a: int, b: int, context: ToolContext) -> int:
         entries={f"{a} + {b}": f"{a + b}".encode()},
     )
     await context.report_progress(progress=0.5, total=1.0)
-    await finish.wait()
+    await finish_event.wait()
     return a + b
 
 

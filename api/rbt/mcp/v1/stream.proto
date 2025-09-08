@@ -1,0 +1,62 @@
+syntax = "proto3";
+
+package rbt.mcp.v1;
+
+import "google/protobuf/empty.proto";
+import "rbt/v1alpha1/options.proto";
+
+////////////////////////////////////////////////////////////////////////
+
+message Stream {
+  option (rbt.v1alpha1.state) = {
+  };
+
+  repeated Event events = 1;
+}
+
+////////////////////////////////////////////////////////////////////////
+
+service StreamMethods {
+  rpc Create(google.protobuf.Empty) returns (google.protobuf.Empty) {
+    option (rbt.v1alpha1.method).writer = {
+    };
+  }
+
+  rpc Put(PutRequest) returns (PutResponse) {
+    option (rbt.v1alpha1.method).writer = {
+    };
+  }
+
+  rpc Replay(ReplayRequest) returns (ReplayResponse) {
+    option (rbt.v1alpha1.method).reader = {
+    };
+  }
+}
+
+////////////////////////////////////////////////////////////////////////
+
+message Event {
+  string id = 1;
+  bytes message_bytes = 2;
+}
+
+////////////////////////////////////////////////////////////////////////
+
+message PutRequest {
+  string event_id = 1;
+  bytes message_bytes = 2;
+}
+
+message PutResponse {}
+
+////////////////////////////////////////////////////////////////////////
+
+message ReplayRequest {
+  optional string last_event_id = 1;
+}
+
+message ReplayResponse {
+  repeated Event events = 1;
+}
+
+////////////////////////////////////////////////////////////////////////

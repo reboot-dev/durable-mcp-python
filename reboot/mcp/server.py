@@ -2,43 +2,24 @@ import asyncio
 import functools
 import httpx
 import inspect
-import mcp.server.streamable_http
+import mcp.types
 import pickle
-from anyio import create_memory_object_stream
-from anyio.streams.memory import (
-    MemoryObjectReceiveStream,
-    MemoryObjectSendStream,
-)
-from contextlib import contextmanager
-from contextvars import ContextVar
-from dataclasses import dataclass
-from mcp import types
 from mcp.server import fastmcp
 from mcp.server.streamable_http import (
     MCP_SESSION_ID_HEADER,
-    EventId,
     StreamableHTTPServerTransport,
 )
-from mcp.shared.message import SessionMessage
-from rbt.mcp.v1.session_rbt import (
-    HandleMessageRequest,
-    HandleMessageResponse,
-    RunRequest,
-    RunResponse,
-    Session,
-    Stream,
-)
-from reboot.aio.auth.authorizers import allow
-from reboot.aio.contexts import WorkflowContext, WriterContext
+from rbt.mcp.v1.session_rbt import Session
+from reboot.aio.contexts import WorkflowContext
 from reboot.aio.external import ExternalContext
 from reboot.aio.types import StateRef
-from reboot.aio.workflows import at_least_once
-from reboot.event_store import (
-    DurableEventStore,
-    StreamServicer,
-    get_event_id,
-    replay,
+from reboot.mcp.event_store import DurableEventStore, replay
+from reboot.mcp.servicers.session import (
+    SessionServicer,
+    _mcp_servers,
+    _context,
 )
+from reboot.mcp.servicers.stream import StreamServicer
 from reboot.std.collections.v1 import sorted_map
 from rebootdev.aio.headers import CONSENSUS_ID_HEADER, STATE_REF_HEADER
 from starlette.applications import Starlette
@@ -76,20 +57,12 @@ class ToolContext(WorkflowContext, ToolContextProtocol):
     pass
 
 
-_context: ContextVar[WorkflowContext | None] = ContextVar(
-    "`WorkflowContext` of current message being handled",
-    default=None,
-)
-
-
 class DurableMCP(fastmcp.FastMCP):
-
-    _instances: dict[str, "DurableMCP"] = {}
 
     def __init__(self, *, path: str):
         super().__init__()
         self._path = path
-        self._instances[path] = self
+        _mcp_servers[path] = self._mcp_server
 
     @property
     def path(self):
@@ -100,11 +73,11 @@ class DurableMCP(fastmcp.FastMCP):
 
     def add_tool(
         self,
-        fn: types.AnyFunction,
+        fn: mcp.types.AnyFunction,
         name: str | None = None,
         title: str | None = None,
         description: str | None = None,
-        annotations: types.ToolAnnotations | None = None,
+        annotations: mcp.types.ToolAnnotations | None = None,
         structured_output: bool | None = None,
     ) -> None:
         """Overrides `FastMCP.add_tool`."""
@@ -202,17 +175,17 @@ class DurableMCP(fastmcp.FastMCP):
                 event_id = uuid5(workflow_id, event_alias).hex
 
                 await ctx.session.send_notification(
-                    types.ServerNotification(
-                        types.ProgressNotification(
+                    mcp.types.ServerNotification(
+                        mcp.types.ProgressNotification(
                             # TODO: figure out why `mypy` requires
                             # passing `method` which has a default.
                             method="notifications/progress",
-                            params=types.ProgressNotificationParams(
+                            params=mcp.types.ProgressNotificationParams(
                                 progressToken=progress_token,
                                 progress=progress,
                                 total=total,
                                 message=message,
-                                _meta=types.NotificationParams.Meta(
+                                _meta=mcp.types.NotificationParams.Meta(
                                     rebootEventId=str(event_id),
                                 ),
                             ),
@@ -406,7 +379,7 @@ class StreamableHTTPASGIApp:
 
                         if not isinstance(message, Exception) and isinstance(
                             message.message.root,
-                            types.JSONRPCRequest,
+                            mcp.types.JSONRPCRequest,
                         ):
                             request_id = message.message.root.id
 
@@ -456,156 +429,3 @@ class StreamableHTTPASGIApp:
         await started.wait()
 
         await http_transport.handle_request(scope, receive, send)
-
-
-@dataclass(kw_only=True)
-class Streams:
-    refs: int
-    read_stream: tuple[MemoryObjectSendStream[SessionMessage | Exception],
-                       MemoryObjectReceiveStream[SessionMessage | Exception]]
-    write_stream: tuple[MemoryObjectSendStream[SessionMessage],
-                        MemoryObjectReceiveStream[SessionMessage]]
-
-
-class SessionServicer(Session.Servicer):
-
-    def __init__(self):
-        self._request_streams: dict[types.RequestId, Streams] = {}
-
-    def authorizer(self):
-        return allow()
-
-    @contextmanager
-    def _get_request_streams(self, request_id: types.RequestId):
-        try:
-            if request_id not in self._request_streams:
-                # Create streams for communicating with MCP server.
-                self._request_streams[request_id] = Streams(
-                    refs=1,  # Initial reference count.
-                    read_stream=create_memory_object_stream[
-                        SessionMessage | Exception](),
-                    write_stream=create_memory_object_stream[SessionMessage](),
-                )
-            else:
-                self._request_streams[request_id].refs += 1
-
-            yield (
-                self._request_streams[request_id].read_stream,
-                self._request_streams[request_id].write_stream,
-            )
-        finally:
-            self._request_streams[request_id].refs -= 1
-            if self._request_streams[request_id].refs == 0:
-                # TODO: do we also need to close the streams in order
-                # for them to get garbage collected?
-                del self._request_streams[request_id]
-
-    async def HandleMessage(
-        self,
-        context: WorkflowContext,
-        request: HandleMessageRequest,
-    ) -> HandleMessageResponse:
-        message = pickle.loads(request.message_bytes)
-
-        if isinstance(message.message.root, types.JSONRPCRequest):
-            print(f"Handling ({type(message).__name__}): {message}")
-
-            request_id = message.message.root.id
-
-            stream = Stream.ref(str(request_id))
-
-            with self._get_request_streams(
-                request_id,
-            ) as (read_stream, write_stream):
-                read_stream_send, _ = read_stream
-                _, write_stream_receive = write_stream
-
-                run_task = await self.ref().spawn().Run(
-                    context,
-                    path=request.path,
-                    message_bytes=request.message_bytes,
-                )
-
-                async def send_and_receive():
-
-                    await read_stream_send.send(message)
-
-                    async for write_message in write_stream_receive:
-                        print(
-                            f"Sending message ({type(write_message).__name__}): "
-                            f"{write_message}"
-                        )
-
-                        event_id = get_event_id(write_message)
-
-                        await stream.per_workflow(event_id).Put(
-                            context,
-                            event_id=event_id,
-                            message_bytes=pickle.dumps(write_message),
-                        )
-
-                        if isinstance(
-                            write_message.message.root,
-                            types.JSONRPCResponse | types.JSONRPCError,
-                        ):
-                            break
-
-                await at_least_once(
-                    "Send and receive",
-                    context,
-                    send_and_receive,
-                )
-
-                await read_stream_send.aclose()
-
-                await run_task
-
-                print(f"Completed ({type(message).__name__}): {message}")
-        else:
-            print(f"UNHANDLED MESSAGE ({type(message).__name__}): {message}")
-
-        return HandleMessageResponse()
-
-    async def Run(
-        self,
-        context: WorkflowContext,
-        request: RunRequest,
-    ) -> RunResponse:
-        path = request.path
-        message = pickle.loads(request.message_bytes)
-
-        assert isinstance(message.message.root, types.JSONRPCRequest)
-
-        request_id = message.message.root.id
-
-        with self._get_request_streams(
-            request_id,
-        ) as (read_stream, write_stream):
-            _, read_stream_receive = read_stream
-            write_stream_send, _ = write_stream
-
-            async def server_run():
-                server = DurableMCP._instances[path]._mcp_server
-                _context.set(context)
-                try:
-                    await server.run(
-                        read_stream_receive,
-                        write_stream_send,
-                        server.create_initialization_options(),
-                        raise_exceptions=True,
-                        # Since we might resume we set `stateless=True`
-                        # because we don't want the server to need to do
-                        # initialization, but it will happily do it when the
-                        # client does it on connect.
-                        stateless=True,
-                    )
-                except:
-                    import traceback
-                    traceback.print_exc()
-                    raise
-                finally:
-                    _context.set(None)
-
-            await at_least_once("Server run", context, server_run)
-
-            return RunResponse()
