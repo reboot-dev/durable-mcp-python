@@ -7,10 +7,10 @@ from reboot.aio.applications import Application
 from reboot.aio.tests import Reboot
 from reboot.mcp import DurableMCP, ToolContext
 from reboot.std.collections.v1.sorted_map import SortedMap
-from tests.client import connect, resume
+from tests.client import connect, reconnect
 
 report_progress_event = asyncio.Event()
-resume_event = asyncio.Event()
+finish_event = asyncio.Event()
 
 # `DurableMCP` server which will handle HTTP requests at path "/mcp".
 mcp = DurableMCP(path="/mcp")
@@ -26,13 +26,13 @@ async def add(a: int, b: int, context: ToolContext) -> int:
         entries={f"{a} + {b}": f"{a + b}".encode()},
     )
     await context.report_progress(progress=0.5, total=1.0)
-    await resume_event.wait()
+    await finish.wait()
     return a + b
 
 
 @mcp.tool()
-async def set_resume() -> None:
-    resume_event.set()
+async def finish() -> None:
+    finish_event.set()
     return None
 
 
@@ -118,7 +118,7 @@ class TestSomething(unittest.IsolatedAsyncioTestCase):
         assert session_id is not None
         assert protocol_version is not None
 
-        async with resume(
+        async with reconnect(
             self.rbt.url() + "/mcp",
             session_id=session_id,
             protocol_version=protocol_version,
@@ -133,7 +133,7 @@ class TestSomething(unittest.IsolatedAsyncioTestCase):
                     types.CallToolRequest(
                         method="tools/call",
                         params=types.CallToolRequestParams(
-                            name="set_resume",
+                            name="finish",
                             arguments={},
                         ),
                     ),

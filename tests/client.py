@@ -31,7 +31,7 @@ async def connect(
 
 
 @asynccontextmanager
-async def resume(
+async def reconnect(
     url: str,
     *,
     session_id: str,
