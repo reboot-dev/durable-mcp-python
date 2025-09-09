@@ -96,6 +96,16 @@ class ToolContext(WorkflowContext, ToolContextProtocol):
 
 
 @dataclass(kw_only=True, frozen=True)
+class Resource:
+    fn: mcp.types.AnyFunction
+    uri: str
+    name: str | None
+    title: str | None
+    description: str | None
+    mime_type: str | None
+
+
+@dataclass(kw_only=True, frozen=True)
 class Tool:
     fn: mcp.types.AnyFunction
     name: str | None
@@ -107,6 +117,7 @@ class Tool:
 
 class DurableMCP(fastmcp.FastMCP):
 
+    _resources: list[Resource]
     _tools: list[Tool]
 
     def __init__(
@@ -118,6 +129,7 @@ class DurableMCP(fastmcp.FastMCP):
         super().__init__(log_level=log_level)
 
         self._path = path
+        self._resources = []
         self._tools = []
 
         set_log_level(logging.getLevelNamesMapping()[log_level])
@@ -128,6 +140,49 @@ class DurableMCP(fastmcp.FastMCP):
 
     def servicers(self):
         return [SessionServicer, StreamServicer] + sorted_map.servicers()
+
+    def resource(
+        self,
+        uri: str,
+        *,
+        name: str | None = None,
+        title: str | None = None,
+        description: str | None = None,
+        mime_type: str | None = None,
+    ) -> Callable[[mcp.types.AnyFunction], mcp.types.AnyFunction]:
+        """Overrides `FastMCP.add_resource`."""
+        # Check if user passed function directly instead of calling decorator
+        if callable(uri):
+            raise TypeError(
+                "The @resource decorator was used incorrectly. "
+                "Did you forget to call it? Use @resource('uri') instead of @resource"
+            )
+
+        def decorator(fn: mcp.types.AnyFunction) -> mcp.types.AnyFunction:
+            self._resources.append(
+                Resource(
+                    fn=fn,
+                    uri=uri,
+                    name=name,
+                    title=title,
+                    description=description,
+                    mime_type=mime_type,
+                )
+            )
+            return fn
+
+        return decorator
+
+    def add_resource(self, resource: fastmcp.resources.Resource) -> None:
+        """Overrides `FastMCP.add_resource`."""
+        # Where as `add_tool()` is a great insertion point,
+        # `add_resource` gives us and already modified function which
+        # does not pickle to the child process by default. This
+        # probably isn't an issue as mostly folks will just use the
+        # decorator, but if it is, we can try extracting everything
+        # from `resource`? We also have to override the `resource()`
+        # decorator anyway to get templates.
+        raise NotImplementedError("Use `resource()` decorator instead")
 
     def add_tool(
         self,
@@ -152,15 +207,30 @@ class DurableMCP(fastmcp.FastMCP):
 
     @property
     def streamable_http_app_factory(self):
-        return functools.partial(_streamable_http_app, self._path, self._tools)
+        return functools.partial(
+            _streamable_http_app,
+            self._path,
+            self._resources,
+            self._tools,
+        )
 
 
 def _streamable_http_app(
     path: str,
+    resources: list[Resource],
     tools: list[Tool],
     external_context_from_request: Callable[[Request], ExternalContext],
 ):
     mcp = fastmcp.FastMCP()
+
+    for resource in resources:
+        mcp.resource(
+            resource.uri,
+            name=resource.name,
+            title=resource.title,
+            description=resource.description,
+            mime_type=resource.mime_type,
+        )(resource.fn)
 
     for tool in tools:
         mcp.add_tool(

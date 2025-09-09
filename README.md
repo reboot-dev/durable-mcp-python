@@ -37,11 +37,11 @@ pytest tests
 - [x] `tools/list`
 - [ ] `prompts/get`
 - [ ] `prompts/list`
-- [ ] `resources/list`
-- [ ] `resources/read`
+- [x] `resources/list`
+- [x] `resources/read`
 - [ ] `resources/subscribe`
 - [ ] `resources/unsubscribe`
-- [ ] `resources/templates/list`
+- [x] `resources/templates/list`
 - [ ] `completion/complete`
 - [ ] `logging/setLevel`
 
