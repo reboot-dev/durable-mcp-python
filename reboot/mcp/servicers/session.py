@@ -140,7 +140,18 @@ class SessionServicer(Session.Servicer):
                 await run_task
 
                 logger.debug(f"Completed ({type(message).__name__}): {message}")
+
         else:
+            if isinstance(message.message.root, mcp.types.JSONRPCNotification):
+                # Ignore "notifications/initialized" as we run the
+                # servers with `stateless=True` here so they are
+                # always initialized.
+                if message.message.root.method == "notifications/initialized":
+                    return HandleMessageResponse()
+
+                # TODO: handle notification or route to the
+                # appropriate request stream if relevant.
+
             logger.warning(f"UNIMPLEMENTED ({type(message).__name__}): {message}")
 
         return HandleMessageResponse()

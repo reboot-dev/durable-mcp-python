@@ -46,7 +46,7 @@ pytest tests/test.py
 - [ ] `logging/setLevel`
 
 ### TODO client --> server _notifications_:
-- [ ] `notifications/initialized`
+- [x] `notifications/initialized`
 
 ### TODO client <-- server _requests_:
 - [ ] `elicitation/create`
