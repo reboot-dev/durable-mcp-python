@@ -67,19 +67,13 @@ class TestSomething(unittest.IsolatedAsyncioTestCase):
                     if message.root.params.data == LOGGING_MESSAGE:
                         received_message_event.set()
 
-        session_id = None
-        protocol_version = None
         last_event_id = None
 
         async with connect(
             self.rbt.url() + "/mcp",
             terminate_on_close=False,
             message_handler=message_handler,
-        ) as (session, get_session_id):
-            result = await session.initialize()
-            assert isinstance(result, types.InitializeResult)
-            session_id = get_session_id()
-            protocol_version = result.protocolVersion
+        ) as (session, session_id, protocol_version):
 
             async def on_resumption_token_update(token: str) -> None:
                 nonlocal last_event_id
@@ -124,15 +118,12 @@ class TestSomething(unittest.IsolatedAsyncioTestCase):
 
         print(f"... application now at {self.rbt.url()}")
 
-        async def message_handler(
+        async def message_handler_expecting_no_messages(
             message: RequestResponder[
                 types.ServerRequest, types.ClientResult
             ] | types.ServerNotification | Exception,
         ) -> None:
             raise RuntimeError(f"Not expecting to get a message, got: {message}")
-
-        assert session_id is not None
-        assert protocol_version is not None
 
         async with reconnect(
             self.rbt.url() + "/mcp",
@@ -142,7 +133,7 @@ class TestSomething(unittest.IsolatedAsyncioTestCase):
             # the session as required by the spec:
             # modelcontextprotocol.io/specification/2025-06-18/basic#requests
             next_request_id=session._request_id,
-            message_handler=message_handler,
+            message_handler=message_handler_expecting_no_messages,
         ) as session:
 
             await session.send_request(
@@ -173,8 +164,7 @@ class TestSomething(unittest.IsolatedAsyncioTestCase):
                         ),
                     ),
                 ),
-                # TODO: figure out why `mypy` fails here.
-                types.CallToolResult,  # type: ignore[arg-type]
+                types.CallToolResult,
                 metadata=ClientMessageMetadata(
                     resumption_token=last_event_id,
                 ),

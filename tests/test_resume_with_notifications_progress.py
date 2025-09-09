@@ -64,18 +64,12 @@ class TestSomething(unittest.IsolatedAsyncioTestCase):
             print(f"Progress: {progress}/{total} ({percentage:.1f}%)")
             report_progress_event.set()
 
-        session_id = None
-        protocol_version = None
         last_event_id = None
 
         async with connect(
             self.rbt.url() + "/mcp",
             terminate_on_close=False,
-        ) as (session, get_session_id):
-            result = await session.initialize()
-            assert isinstance(result, types.InitializeResult)
-            session_id = get_session_id()
-            protocol_version = result.protocolVersion
+        ) as (session, session_id, protocol_version):
 
             async def on_resumption_token_update(token: str) -> None:
                 nonlocal last_event_id
@@ -121,9 +115,6 @@ class TestSomething(unittest.IsolatedAsyncioTestCase):
 
         print(f"... application now at {self.rbt.url()}")
 
-        assert session_id is not None
-        assert protocol_version is not None
-
         async with reconnect(
             self.rbt.url() + "/mcp",
             session_id=session_id,
@@ -162,8 +153,7 @@ class TestSomething(unittest.IsolatedAsyncioTestCase):
                         ),
                     ),
                 ),
-                # TODO: figure out why `mypy` fails here.
-                types.CallToolResult,  # type: ignore[arg-type]
+                types.CallToolResult,
                 metadata=ClientMessageMetadata(
                     resumption_token=last_event_id,
                 ),

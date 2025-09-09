@@ -51,7 +51,7 @@ async def connect(
     headers: dict[str, str] | None = None,
     terminate_on_close: bool = True,
     message_handler: MessageHandlerFnT | None = None,
-) -> AsyncIterator[tuple[mcp.ClientSession, Callable[[], str | None]]]:
+) -> AsyncIterator[tuple[mcp.ClientSession, str, str | int]]:
     async with streamablehttp_client(
         url,
         headers=headers,
@@ -63,7 +63,16 @@ async def connect(
             write_stream,
             message_handler=message_handler,
         ) as session:
-            yield session, get_session_id
+            result = await session.initialize()
+            assert isinstance(result, mcp.types.InitializeResult)
+
+            protocol_version = result.protocolVersion
+
+            session_id = get_session_id()
+
+            assert session_id is not None
+
+            yield session, session_id, protocol_version
 
 
 @asynccontextmanager
@@ -84,6 +93,6 @@ async def reconnect(
         headers=headers,
         terminate_on_close=terminate_on_close,
         message_handler=message_handler,
-    ) as (session, _):
+    ) as (session, _, _):
         session._request_id = next_request_id
         yield session

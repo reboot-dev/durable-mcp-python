@@ -41,20 +41,11 @@ class TestSomething(unittest.IsolatedAsyncioTestCase):
     async def test_mcp(self) -> None:
         revision = await self.rbt.up(application)
 
-        session_id = None
-        protocol_version = None
-
         async with connect(
             self.rbt.url() + "/mcp",
             terminate_on_close=False,
-        ) as (session, get_session_id):
-            result = await session.initialize()
-            assert isinstance(result, types.InitializeResult)
-            session_id = get_session_id()
-            protocol_version = result.protocolVersion
-
-            result = await session.list_resources()
-            print(result)
+        ) as (session, session_id, protocol_version):
+            print(await session.list_resources())
 
         print(f"Rebooting application running at {self.rbt.url()}...")
 
@@ -62,9 +53,6 @@ class TestSomething(unittest.IsolatedAsyncioTestCase):
         await self.rbt.up(revision=revision)
 
         print(f"... application now at {self.rbt.url()}")
-
-        assert session_id is not None
-        assert protocol_version is not None
 
         async with reconnect(
             self.rbt.url() + "/mcp",
@@ -75,8 +63,7 @@ class TestSomething(unittest.IsolatedAsyncioTestCase):
             # modelcontextprotocol.io/specification/2025-06-18/basic#requests
             next_request_id=session._request_id,
         ) as session:
-            result = await session.read_resource(AnyUrl("config://settings"))
-            print(result)
+            print(await session.read_resource(AnyUrl("config://settings")))
 
 
 if __name__ == '__main__':
