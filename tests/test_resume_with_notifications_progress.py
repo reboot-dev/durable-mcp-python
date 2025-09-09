@@ -31,7 +31,6 @@ async def add(a: int, b: int, context: ToolContext) -> int:
 @mcp.tool()
 async def finish() -> None:
     finish_event.set()
-    return None
 
 
 # Reboot application that runs everything necessary for `DurableMCP`.
