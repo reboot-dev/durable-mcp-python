@@ -25,7 +25,7 @@ async def add(a: int, b: int, context: ToolContext) -> int:
         entries={f"{a} + {b}": f"{a + b}".encode()},
     )
     await context.session.send_tool_list_changed("For testing")
-    # Need to also send at least on progress report so we have a
+    # Need to also send at least one progress report so we have a
     # last-event-id.
     await context.report_progress(progress=0.5, total=1.0)
     await finish_event.wait()

@@ -24,11 +24,11 @@ async def add(a: int, b: int, context: ToolContext) -> int:
         context,
         entries={f"{a} + {b}": f"{a + b}".encode()},
     )
-    await context.session.send_prompt_list_changed("For testing")
     # Need to also send at least one progress report so we have a
     # last-event-id.
     await context.report_progress(progress=0.5, total=1.0)
     await finish_event.wait()
+    await context.session.send_resource_list_changed("For testing")
     return a + b
 
 
@@ -56,16 +56,12 @@ class TestSomething(unittest.IsolatedAsyncioTestCase):
     async def test_mcp(self) -> None:
         revision = await self.rbt.up(application)
 
-        received_notification_event = asyncio.Event()
-
-        async def message_handler(
+        async def message_handler_expecting_no_messages(
             message: RequestResponder[
                 types.ServerRequest, types.ClientResult
             ] | types.ServerNotification | Exception,
         ) -> None:
-            if isinstance(message, types.ServerNotification):
-                if isinstance(message.root, types.PromptListChangedNotification):
-                    received_notification_event.set()
+            raise RuntimeError(f"Not expecting to get a message, got: {message}")
 
         report_progress_event = asyncio.Event()
 
@@ -81,7 +77,7 @@ class TestSomething(unittest.IsolatedAsyncioTestCase):
         async with connect(
             self.rbt.url() + "/mcp",
             terminate_on_close=False,
-            message_handler=message_handler,
+            message_handler=message_handler_expecting_no_messages,
         ) as (session, session_id, protocol_version):
 
             async def on_resumption_token_update(token: str) -> None:
@@ -110,8 +106,6 @@ class TestSomething(unittest.IsolatedAsyncioTestCase):
                 )
             )
 
-            await received_notification_event.wait()
-
             while last_event_id == None:
                 await asyncio.sleep(0.01)
 
@@ -128,12 +122,16 @@ class TestSomething(unittest.IsolatedAsyncioTestCase):
 
         print(f"... application now at {self.rbt.url()}")
 
-        async def message_handler_expecting_no_messages(
+        received_notification_event = asyncio.Event()
+
+        async def message_handler(
             message: RequestResponder[
                 types.ServerRequest, types.ClientResult
             ] | types.ServerNotification | Exception,
         ) -> None:
-            raise RuntimeError(f"Not expecting to get a message, got: {message}")
+            if isinstance(message, types.ServerNotification):
+                if isinstance(message.root, types.ResourceListChangedNotification):
+                    received_notification_event.set()
 
         async with reconnect(
             self.rbt.url() + "/mcp",
@@ -143,7 +141,7 @@ class TestSomething(unittest.IsolatedAsyncioTestCase):
             # the session as required by the spec:
             # modelcontextprotocol.io/specification/2025-06-18/basic#requests
             next_request_id=session._request_id,
-            message_handler=message_handler_expecting_no_messages,
+            message_handler=message_handler,
         ) as session:
 
             await session.send_request(
@@ -181,6 +179,8 @@ class TestSomething(unittest.IsolatedAsyncioTestCase):
             )
 
             print(result)
+
+            await received_notification_event.wait()
 
             context = self.rbt.create_external_context(
                 name=self.id(),
