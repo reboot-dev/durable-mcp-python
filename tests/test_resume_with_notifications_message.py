@@ -125,6 +125,13 @@ class TestSomething(unittest.IsolatedAsyncioTestCase):
 
         print(f"... application now at {self.rbt.url()}")
 
+        async def message_handler(
+            message: RequestResponder[
+                types.ServerRequest, types.ClientResult
+            ] | types.ServerNotification | Exception,
+        ) -> None:
+            raise RuntimeError(f"Not expecting to get a message, got: {message}")
+
         assert session_id is not None
         assert protocol_version is not None
 
@@ -136,6 +143,7 @@ class TestSomething(unittest.IsolatedAsyncioTestCase):
             # the session as required by the spec:
             # modelcontextprotocol.io/specification/2025-06-18/basic#requests
             next_request_id=session._request_id,
+            message_handler=message_handler,
         ) as session:
 
             await session.send_request(
