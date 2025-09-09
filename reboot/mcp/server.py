@@ -5,6 +5,7 @@ import inspect
 import logging
 import mcp.types
 import pickle
+from dataclasses import dataclass
 from log.log import get_logger, set_log_level
 from mcp.server import fastmcp
 from mcp.server.streamable_http import (
@@ -18,7 +19,7 @@ from reboot.aio.types import StateRef
 from reboot.mcp.event_store import DurableEventStore, replay
 from reboot.mcp.servicers.session import (
     SessionServicer,
-    _mcp_servers,
+    _servers,
     _context,
 )
 from reboot.mcp.servicers.stream import StreamServicer
@@ -94,7 +95,19 @@ class ToolContext(WorkflowContext, ToolContextProtocol):
     pass
 
 
+@dataclass(kw_only=True, frozen=True)
+class Tool:
+    fn: mcp.types.AnyFunction
+    name: str | None
+    title: str | None
+    description: str | None
+    annotations: mcp.types.ToolAnnotations | None
+    structured_output: bool | None
+
+
 class DurableMCP(fastmcp.FastMCP):
+
+    _tools: list[Tool]
 
     def __init__(
         self,
@@ -103,8 +116,10 @@ class DurableMCP(fastmcp.FastMCP):
         log_level: Literal["DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"] = "WARNING",
     ):
         super().__init__(log_level=log_level)
+
         self._path = path
-        _mcp_servers[path] = self._mcp_server
+        self._tools = []
+
         set_log_level(logging.getLevelNamesMapping()[log_level])
 
     @property
@@ -124,231 +139,41 @@ class DurableMCP(fastmcp.FastMCP):
         structured_output: bool | None = None,
     ) -> None:
         """Overrides `FastMCP.add_tool`."""
-        signature = inspect.signature(fn)
-
-        wrapper_parameters = [
-            # Always include the `context` parameter so we can access
-            # session specific things.
-            inspect.Parameter(
-                "ctx",
-                kind=inspect.Parameter.POSITIONAL_OR_KEYWORD,
-                annotation=fastmcp.Context,
+        self._tools.append(
+            Tool(
+                fn=fn,
+                name=name,
+                title=title,
+                description=description,
+                annotations=annotations,
+                structured_output=structured_output,
             )
-        ]
-
-        context_parameter_names = []
-
-        for parameter_name, parameter in signature.parameters.items():
-            annotation = parameter.annotation
-            if (
-                isinstance(annotation, type) and
-                issubclass(annotation, fastmcp.Context)
-            ):
-                raise TypeError(
-                    "`DurableMCP` only injects `ToolContext` not `Context`")
-            if (
-                isinstance(annotation, type) and
-                issubclass(annotation, ToolContext)
-            ):
-                context_parameter_names.append(parameter_name)
-            else:
-                wrapper_parameters.append(parameter)
-
-        wrapper_signature = signature.replace(parameters=wrapper_parameters)
-
-        async def wrapper(ctx: fastmcp.Context, *args, **kwargs):
-
-            context: WorkflowContext | None = _context.get()
-
-            assert context is not None
-
-            # To account for the lack of "intersection" types in
-            # Python (which is actively being worked on), we instead
-            # create a new dynamic `ToolContext` instance that
-            # inherits from the instance of `WorkflowContext` that we
-            # already have.
-            context.__class__ = ToolContext
-
-            context = cast(ToolContext, context)
-
-            # Now we add the `ToolContextProtocol` properties.
-            context._event_aliases = set()
-
-            async def report_progress(
-                self,
-                progress: float,
-                total: float | None = None,
-                message: str | None = None,
-            ) -> None:
-                progress_token = (
-                    ctx.request_context.meta.progressToken
-                    if ctx.request_context.meta else None
-                )
-
-                if progress_token is None:
-                    return
-
-                # TODO: consider tracking all reported progress and if
-                # it has gone "backwards" provide a nice error so
-                # developers can fix their bug (presumably they don't
-                # ever want the progress to go "backwards").
-
-                event_alias = (
-                    f"report_progress(progress={progress}, total={total}, "
-                    f"message={message})"
-                )
-
-                assert context is not None
-
-                if context.within_loop():
-                    event_alias += f" #{context.task.iteration}"
-
-                if event_alias in self._event_aliases:
-                    raise TypeError(
-                        f"Looks like you're calling `report_progress()` "
-                        "more than once with the same arguments"
-                    )
-
-                self._event_aliases.add(event_alias)
-
-                workflow_id = context.workflow_id
-
-                assert workflow_id is not None
-
-                # Generate a unique but deterministic ID for this
-                # event based on the alias and this workflow (which is
-                # unique per request).
-                event_id = uuid5(workflow_id, event_alias).hex
-
-                await ctx.session.send_notification(
-                    mcp.types.ServerNotification(
-                        mcp.types.ProgressNotification(
-                            # TODO: figure out why `mypy` requires
-                            # passing `method` which has a default.
-                            method="notifications/progress",
-                            params=mcp.types.ProgressNotificationParams(
-                                progressToken=progress_token,
-                                progress=progress,
-                                total=total,
-                                message=message,
-                                _meta=mcp.types.NotificationParams.Meta(
-                                    rebootEventId=str(event_id),
-                                ),
-                            ),
-                        ),
-                    ),
-                    related_request_id=ctx.request_id,
-                )
-
-            context.report_progress = MethodType(report_progress, context)  # type: ignore[method-assign]
-
-            async def log(
-                self,
-                level: Literal["debug", "info", "warning", "error"],
-                message: str,
-                *,
-                logger_name: str | None = None,
-            ) -> None:
-                event_alias = (
-                    f"log(level='{level}', message='{message}', logger_name={logger_name})"
-                )
-
-                assert context is not None
-
-                if context.within_loop():
-                    event_alias += f" #{context.task.iteration}"
-
-                if event_alias in self._event_aliases:
-                    raise TypeError(
-                        "Looks like you're trying to `log()` "
-                        "more than once with the same arguments"
-                    )
-
-                self._event_aliases.add(event_alias)
-
-                workflow_id = context.workflow_id
-
-                assert workflow_id is not None
-
-                # Generate a unique but deterministic ID for this
-                # event based on the alias and this workflow (which is
-                # unique per request).
-                event_id = uuid5(workflow_id, event_alias).hex
-
-                await ctx.session.send_notification(
-                    mcp.types.ServerNotification(
-                        mcp.types.LoggingMessageNotification(
-                            # TODO: figure out why `mypy` requires
-                            # passing `method` which has a default.
-                            method="notifications/message",
-                            params=mcp.types.LoggingMessageNotificationParams(
-                                level=level,
-                                data=message,
-                                logger=logger_name,
-                                _meta=mcp.types.NotificationParams.Meta(
-                                    rebootEventId=str(event_id),
-                                ),
-                            ),
-                        )
-                    ),
-                    related_request_id=ctx.request_id,
-                )
-
-            context.log = MethodType(log, context)  # type: ignore[method-assign]
-
-            async def debug(self, message: str) -> None:
-                await self.log("debug", message)
-
-            context.debug = MethodType(debug, context)  # type: ignore[method-assign]
-
-            async def info(self, message: str) -> None:
-                await self.log("info", message)
-
-            context.info = MethodType(info, context)  # type: ignore[method-assign]
-
-            async def warning(self, message: str) -> None:
-                await self.log("warning", message)
-
-            context.warning = MethodType(warning, context)  # type: ignore[method-assign]
-
-            async def error(self, message: str) -> None:
-                await self.log("error", message)
-
-            context.error = MethodType(error, context)  # type: ignore[method-assign]
-
-            for context_parameter_name in context_parameter_names:
-                kwargs[context_parameter_name] = context
-
-            bound = signature.bind(*args, **kwargs)
-            bound.apply_defaults()
-
-            if fastmcp.tools.base._is_async_callable(fn):
-                return await fn(**dict(bound.arguments))
-
-            return fn(**dict(bound.arguments))
-
-        setattr(wrapper, "__signature__", wrapper_signature)
-        wrapper.__name__ = fn.__name__
-        wrapper.__doc__ = fn.__doc__
-
-        super().add_tool(
-            wrapper,
-            name,
-            title,
-            description,
-            annotations,
-            structured_output,
         )
 
     @property
     def streamable_http_app_factory(self):
-        return functools.partial(_streamable_http_app, self._path)
+        return functools.partial(_streamable_http_app, self._path, self._tools)
 
 
 def _streamable_http_app(
     path: str,
+    tools: list[Tool],
     external_context_from_request: Callable[[Request], ExternalContext],
 ):
+    mcp = fastmcp.FastMCP()
+
+    for tool in tools:
+        mcp.add_tool(
+            _wrap_tool(tool.fn),
+            name=tool.name,
+            title=tool.title,
+            description=tool.description,
+            annotations=tool.annotations,
+            structured_output=tool.structured_output,
+        )
+
+    _servers[path] = mcp._mcp_server
+
     return Starlette(
         routes=[
             Route(
@@ -360,6 +185,218 @@ def _streamable_http_app(
             ),
         ],
     )
+
+
+def _wrap_tool(fn: mcp.types.AnyFunction) -> None:
+    signature = inspect.signature(fn)
+
+    wrapper_parameters = [
+        # Always include the `context` parameter so we can access
+        # session specific things.
+        inspect.Parameter(
+            "ctx",
+            kind=inspect.Parameter.POSITIONAL_OR_KEYWORD,
+            annotation=fastmcp.Context,
+        )
+    ]
+
+    context_parameter_names = []
+
+    for parameter_name, parameter in signature.parameters.items():
+        annotation = parameter.annotation
+        if (
+            isinstance(annotation, type) and
+            issubclass(annotation, fastmcp.Context)
+        ):
+            raise TypeError(
+                "`DurableMCP` only injects `ToolContext` not `Context`")
+        if (
+            isinstance(annotation, type) and
+            issubclass(annotation, ToolContext)
+        ):
+            context_parameter_names.append(parameter_name)
+        else:
+            wrapper_parameters.append(parameter)
+
+    wrapper_signature = signature.replace(parameters=wrapper_parameters)
+
+    async def wrapper(ctx: fastmcp.Context, *args, **kwargs):
+
+        context: WorkflowContext | None = _context.get()
+
+        assert context is not None
+
+        # To account for the lack of "intersection" types in
+        # Python (which is actively being worked on), we instead
+        # create a new dynamic `ToolContext` instance that
+        # inherits from the instance of `WorkflowContext` that we
+        # already have.
+        context.__class__ = ToolContext
+
+        context = cast(ToolContext, context)
+
+        # Now we add the `ToolContextProtocol` properties.
+        context._event_aliases = set()
+
+        async def report_progress(
+            self,
+            progress: float,
+            total: float | None = None,
+            message: str | None = None,
+        ) -> None:
+            progress_token = (
+                ctx.request_context.meta.progressToken
+                if ctx.request_context.meta else None
+            )
+
+            if progress_token is None:
+                return
+
+            # TODO: consider tracking all reported progress and if
+            # it has gone "backwards" provide a nice error so
+            # developers can fix their bug (presumably they don't
+            # ever want the progress to go "backwards").
+
+            event_alias = (
+                f"report_progress(progress={progress}, total={total}, "
+                f"message={message})"
+            )
+
+            assert context is not None
+
+            if context.within_loop():
+                event_alias += f" #{context.task.iteration}"
+
+            if event_alias in self._event_aliases:
+                raise TypeError(
+                    f"Looks like you're calling `report_progress()` "
+                    "more than once with the same arguments"
+                )
+
+            self._event_aliases.add(event_alias)
+
+            workflow_id = context.workflow_id
+
+            assert workflow_id is not None
+
+            # Generate a unique but deterministic ID for this
+            # event based on the alias and this workflow (which is
+            # unique per request).
+            event_id = uuid5(workflow_id, event_alias).hex
+
+            await ctx.session.send_notification(
+                mcp.types.ServerNotification(
+                    mcp.types.ProgressNotification(
+                        # TODO: figure out why `mypy` requires
+                        # passing `method` which has a default.
+                        method="notifications/progress",
+                        params=mcp.types.ProgressNotificationParams(
+                            progressToken=progress_token,
+                            progress=progress,
+                            total=total,
+                            message=message,
+                            _meta=mcp.types.NotificationParams.Meta(
+                                rebootEventId=str(event_id),
+                            ),
+                        ),
+                    ),
+                ),
+                related_request_id=ctx.request_id,
+            )
+
+        context.report_progress = MethodType(report_progress, context)  # type: ignore[method-assign]
+
+        async def log(
+            self,
+            level: Literal["debug", "info", "warning", "error"],
+            message: str,
+            *,
+            logger_name: str | None = None,
+        ) -> None:
+            event_alias = (
+                f"log(level='{level}', message='{message}', logger_name={logger_name})"
+            )
+
+            assert context is not None
+
+            if context.within_loop():
+                event_alias += f" #{context.task.iteration}"
+
+            if event_alias in self._event_aliases:
+                raise TypeError(
+                    "Looks like you're trying to `log()` "
+                    "more than once with the same arguments"
+                )
+
+            self._event_aliases.add(event_alias)
+
+            workflow_id = context.workflow_id
+
+            assert workflow_id is not None
+
+            # Generate a unique but deterministic ID for this
+            # event based on the alias and this workflow (which is
+            # unique per request).
+            event_id = uuid5(workflow_id, event_alias).hex
+
+            await ctx.session.send_notification(
+                mcp.types.ServerNotification(
+                    mcp.types.LoggingMessageNotification(
+                        # TODO: figure out why `mypy` requires
+                        # passing `method` which has a default.
+                        method="notifications/message",
+                        params=mcp.types.LoggingMessageNotificationParams(
+                            level=level,
+                            data=message,
+                            logger=logger_name,
+                            _meta=mcp.types.NotificationParams.Meta(
+                                rebootEventId=str(event_id),
+                            ),
+                        ),
+                    )
+                ),
+                related_request_id=ctx.request_id,
+            )
+
+        context.log = MethodType(log, context)  # type: ignore[method-assign]
+
+        async def debug(self, message: str) -> None:
+            await self.log("debug", message)
+
+        context.debug = MethodType(debug, context)  # type: ignore[method-assign]
+
+        async def info(self, message: str) -> None:
+            await self.log("info", message)
+
+        context.info = MethodType(info, context)  # type: ignore[method-assign]
+
+        async def warning(self, message: str) -> None:
+            await self.log("warning", message)
+
+        context.warning = MethodType(warning, context)  # type: ignore[method-assign]
+
+        async def error(self, message: str) -> None:
+            await self.log("error", message)
+
+        context.error = MethodType(error, context)  # type: ignore[method-assign]
+
+        for context_parameter_name in context_parameter_names:
+            kwargs[context_parameter_name] = context
+
+        bound = signature.bind(*args, **kwargs)
+        bound.apply_defaults()
+
+        if fastmcp.tools.base._is_async_callable(fn):
+            return await fn(**dict(bound.arguments))
+
+        return fn(**dict(bound.arguments))
+
+    setattr(wrapper, "__signature__", wrapper_signature)
+    wrapper.__name__ = fn.__name__
+    wrapper.__doc__ = fn.__doc__
+
+    return wrapper
+
 
 
 class StreamableHTTPASGIApp:

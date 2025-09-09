@@ -26,8 +26,8 @@ from reboot.mcp.event_store import get_event_id
 
 logger = get_logger(__name__)
 
-# Global of all of the MCP servers for calling `run()`.
-_mcp_servers: dict[str, Server] = {}
+# Dictionary from path to MCP server for calling `run()`.
+_servers: dict[str, Server] = {}
 
 # Python asyncio context variable for the `WorkflowContext` of the
 # current message being handled.
@@ -164,8 +164,8 @@ class SessionServicer(Session.Servicer):
             write_stream_send, _ = write_stream
 
             async def server_run():
-                global _mcp_servers
-                server = _mcp_servers[path]
+                global _servers
+                server = _servers[path]
                 _context.set(context)
                 try:
                     await server.run(
