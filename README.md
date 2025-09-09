@@ -28,7 +28,7 @@ docker ps
 ```
 And run the test(s):
 ```console
-pytest tests/test.py
+pytest tests
 ```
 
 ### Supported client --> server _requests_:
