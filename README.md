@@ -39,14 +39,15 @@ pytest tests
 - [ ] `prompts/list`
 - [x] `resources/list`
 - [x] `resources/read`
+- [x] `resources/templates/list`
 - [ ] `resources/subscribe`
 - [ ] `resources/unsubscribe`
-- [x] `resources/templates/list`
 - [ ] `completion/complete`
 - [ ] `logging/setLevel`
 
 ### Supported client --> server _notifications_:
 - [x] `notifications/initialized`
+- [ ] `notifications/roots/list_changed`
 
 ### Supported client <-- server _requests_:
 - [ ] `elicitation/create`
@@ -56,11 +57,10 @@ pytest tests
 ### Supported client <-- server _notifications_:
 - [x] `notifications/progress`
 - [x] `notifications/message`
-- [ ] `notifications/prompts/list_changed`
-- [ ] `notifications/resources/list_changed`
+- [x] `notifications/prompts/list_changed`
+- [x] `notifications/resources/list_changed`
+- [x] `notifications/tools/list_changed`
 - [ ] `notifications/resources/updated`
-- [ ] `notifications/roots/list_changed`
-- [ ] `notifications/tools/list_changed`
 
 ### Supported client <--> server _notifications_:
 - [ ] `notifications/cancelled`

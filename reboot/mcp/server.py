@@ -8,6 +8,7 @@ import pickle
 from dataclasses import dataclass
 from log.log import get_logger, set_log_level
 from mcp.server import fastmcp
+from mcp.server.session import ServerSession
 from mcp.server.streamable_http import (
     MCP_SESSION_ID_HEADER,
     StreamableHTTPServerTransport,
@@ -37,9 +38,120 @@ from uuid import uuid4, uuid5
 logger = get_logger(__name__)
 
 
+class DurableSession:
+
+    _session: ServerSession
+    _context: WorkflowContext
+    _event_aliases: set[str]
+
+    def __init__(self, session: ServerSession, context: WorkflowContext):
+        self._session = session
+        self._context = context
+        self._event_aliases = set()
+
+    def _event_id(self, function_name: str, why: str):
+        event_alias = f"{function_name}: {why}"
+
+        assert self._context is not None
+
+        if self._context.within_loop():
+            event_alias += f" #{self._context.task.iteration}"
+
+        if event_alias in self._event_aliases:
+            raise TypeError(
+                f"Looks like you're calling `{function_name}()` "
+                "more than once with the same `why`"
+            )
+
+        self._event_aliases.add(event_alias)
+
+        workflow_id = self._context.workflow_id
+
+        assert workflow_id is not None
+
+        # Generate a unique but deterministic ID for this event based
+        # on the alias and this workflow (which is unique per
+        # request).
+        return uuid5(workflow_id, event_alias).hex
+
+    async def send_resource_list_changed(self, why: str) -> None:
+        """
+        Send a resource list changed notification.
+
+        Args:
+            why: Description of why the resource list changed,
+                 used to durably differentiate resource list
+                 changed events that are sent to client
+        """
+        event_id = self._event_id("send_resource_list_changed", why)
+
+        await self._session.send_notification(
+            mcp.types.ServerNotification(
+                mcp.types.ResourceListChangedNotification(
+                    # TODO: figure out why `mypy` requires
+                    # passing `method` which has a default.
+                    method="notifications/resources/list_changed",
+                    _meta=mcp.types.NotificationParams.Meta(
+                        rebootEventId=str(event_id),
+                    ),
+                ),
+            ),
+        )
+
+    async def send_tool_list_changed(self, why: str) -> None:
+        """
+        Send a tool list changed notification.
+
+        Args:
+            why: Description of why the resource list changed,
+                 used to durably differentiate resource list
+                 changed events that are sent to client
+        """
+        event_id = self._event_id("send_tool_list_changed", why)
+
+        await self._session.send_notification(
+            mcp.types.ServerNotification(
+                mcp.types.ToolListChangedNotification(
+                    # TODO: figure out why `mypy` requires
+                    # passing `method` which has a default.
+                    method="notifications/tools/list_changed",
+                    _meta=mcp.types.NotificationParams.Meta(
+                        rebootEventId=str(event_id),
+                    ),
+                ),
+            ),
+        )
+
+    async def send_prompt_list_changed(self, why: str) -> None:
+        """
+        Send a prompt list changed notification.
+
+        Args:
+            why: Description of why the resource list changed,
+                 used to durably differentiate resource list
+                 changed events that are sent to client
+        """
+        event_id = self._event_id("send_prompt_list_changed", why)
+
+        await self._session.send_notification(
+            mcp.types.ServerNotification(
+                mcp.types.PromptListChangedNotification(
+                    # TODO: figure out why `mypy` requires
+                    # passing `method` which has a default.
+                    method="notifications/prompts/list_changed",
+                    _meta=mcp.types.NotificationParams.Meta(
+                        rebootEventId=str(event_id),
+                    ),
+                ),
+            ),
+        )
+
+
 class ToolContextProtocol(Protocol):
 
     _event_aliases: set[str]
+
+    session: DurableSession
 
     async def report_progress(
         self,
@@ -257,7 +369,7 @@ def _streamable_http_app(
     )
 
 
-def _wrap_tool(fn: mcp.types.AnyFunction) -> None:
+def _wrap_tool(fn: mcp.types.AnyFunction) -> mcp.types.AnyFunction:
     signature = inspect.signature(fn)
 
     wrapper_parameters = [
@@ -307,6 +419,8 @@ def _wrap_tool(fn: mcp.types.AnyFunction) -> None:
 
         # Now we add the `ToolContextProtocol` properties.
         context._event_aliases = set()
+
+        context.session = DurableSession(ctx.session, context)
 
         async def report_progress(
             self,
@@ -456,10 +570,18 @@ def _wrap_tool(fn: mcp.types.AnyFunction) -> None:
         bound = signature.bind(*args, **kwargs)
         bound.apply_defaults()
 
-        if fastmcp.tools.base._is_async_callable(fn):
-            return await fn(**dict(bound.arguments))
+        try:
+            if fastmcp.tools.base._is_async_callable(fn):
+                return await fn(**dict(bound.arguments))
 
-        return fn(**dict(bound.arguments))
+            return fn(**dict(bound.arguments))
+        except:
+            # TODO: print stack trace after we've fixed `memoize`
+            # effect validation bug.
+            #
+            # import traceback
+            # traceback.print_exc()
+            raise
 
     setattr(wrapper, "__signature__", wrapper_signature)
     wrapper.__name__ = fn.__name__
