@@ -1,7 +1,3 @@
-[build-system]
-requires = ["hatchling>=1.21.0"]
-build-backend = "hatchling.build"
-
 [project]
 name = "durable-mcp"
 version = "0.1.1"
@@ -43,19 +39,32 @@ Homepage = "https://github.com/reboot-dev/mcp-python"
 Repository = "https://github.com/reboot-dev/mcp-python"
 Issues = "https://github.com/reboot-dev/mcp-python/issues"
 
+[build-system]
+requires = ["hatchling>=1.21.0"]
+build-backend = "hatchling.build"
+
 [tool.hatch.build]
+ignore-vcs = true
 exclude = [
     "tests",
     "*.pyc",
     "__pycache__",
-    ".venv",
+    ".venv*",
+    "BUILD.bazel",
+    ".devcontainer",
+    ".python-version",
+    "Dockerfile",
+    "uv.lock",
+    ".rbtrc",
+    ".gitignore",
+    ".mypy.ini",
+    ".pytest.ini"
 ]
+only-include = ["reboot", "api"]
 
-[tool.hatch.build.targets.wheel]
-packages = ["reboot", "api"]
-
-[tool.hatch.metadata]
-allow-direct-references = true
+[tool.hatch.build.sources]
+"api/rbt" = "rbt"
+"api/google" = "google"
 
 [tool.mypy]
 python_version = "3.12"

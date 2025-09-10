@@ -69,5 +69,5 @@ pytest tests
 - [x] `EventStore` support for resumability
 - [ ] Docs
 - [ ] `yapf`
-- [ ] Push to `reboot-mcp` in pypi.org
+- [x] Push to `durable-mcp` in pypi.org
 - [ ] Pydantic `state` for each session

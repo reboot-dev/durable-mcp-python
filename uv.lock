@@ -1200,7 +1200,7 @@ wheels = [
 ]
 
 [[package]]
-name = "reboot-mcp"
+name = "durable-mcp"
 version = "0.1.0"
 source = { virtual = "." }
 dependencies = [
