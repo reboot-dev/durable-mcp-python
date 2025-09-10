@@ -1,11 +1,62 @@
+[build-system]
+requires = ["hatchling>=1.21.0"]
+build-backend = "hatchling.build"
+
 [project]
-name = "reboot-mcp"
-version = "0.1.0"
-requires-python = ">= 3.12.11"
+name = "durable-mcp"
+version = "0.1.1"
+description = "Durable Model Context Protocol (MCP) helpers for building resumable MCP servers on top of Reboot durable workflows."
+readme = "README.md"
+license = { file = "LICENSE" }
+authors = [
+    { name = "Reboot", email = "team@reboot.dev" }
+]
+keywords = ["mcp", "model-context-protocol", "durable", "workflows", "reboot"]
+classifiers = [
+    "Development Status :: 2 - Pre-Alpha",
+    "Intended Audience :: Developers",
+    "License :: OSI Approved :: Apache Software License",
+    "Programming Language :: Python",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.12",
+    "Typing :: Typed",
+    "Topic :: Software Development :: Libraries",
+    "Topic :: Internet :: WWW/HTTP",
+]
+requires-python = ">=3.12.11"
 dependencies = [
     "reboot==0.37.1",
     "mcp==1.13.1",
+]
+
+[project.optional-dependencies]
+dev = [
     "mypy==1.2.0",
     "pytest==8.4.1",
     "types-protobuf>=4.24.0.20240129",
+    "build",
+    "twine",
 ]
+
+[project.urls]
+Homepage = "https://github.com/reboot-dev/mcp-python"
+Repository = "https://github.com/reboot-dev/mcp-python"
+Issues = "https://github.com/reboot-dev/mcp-python/issues"
+
+[tool.hatch.build]
+exclude = [
+    "tests",
+    "*.pyc",
+    "__pycache__",
+    ".venv",
+]
+
+[tool.hatch.build.targets.wheel]
+packages = ["reboot", "api"]
+
+[tool.hatch.metadata]
+allow-direct-references = true
+
+[tool.mypy]
+python_version = "3.12"
+strict = false
