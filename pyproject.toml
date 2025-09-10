@@ -1,6 +1,6 @@
 [project]
 name = "durable-mcp"
-version = "0.1.1"
+version = "0.1.2"
 description = "Durable Model Context Protocol (MCP) helpers for building resumable MCP servers on top of Reboot durable workflows."
 readme = "README.md"
 license = { file = "LICENSE" }
