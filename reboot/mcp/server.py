@@ -264,6 +264,14 @@ class Resource:
 
 
 @dataclass(kw_only=True, frozen=True)
+class Prompt:
+    func: mcp.types.AnyFunction
+    name: str | None
+    title: str | None
+    description: str | None
+
+
+@dataclass(kw_only=True, frozen=True)
 class Tool:
     fn: mcp.types.AnyFunction
     name: str | None
@@ -276,6 +284,7 @@ class Tool:
 class DurableMCP(fastmcp.FastMCP):
 
     _resources: list[Resource]
+    _prompts: list[Prompt]
     _tools: list[Tool]
 
     def __init__(
@@ -288,6 +297,7 @@ class DurableMCP(fastmcp.FastMCP):
 
         self._path = path
         self._resources = []
+        self._prompts = []
         self._tools = []
 
         set_log_level(logging.getLevelNamesMapping()[log_level])
@@ -309,7 +319,7 @@ class DurableMCP(fastmcp.FastMCP):
         mime_type: str | None = None,
     ) -> Callable[[mcp.types.AnyFunction], mcp.types.AnyFunction]:
         """Overrides `FastMCP.add_resource`."""
-        # Check if user passed function directly instead of calling decorator
+        # Check if user passed function directly instead of calling decorator.
         if callable(uri):
             raise TypeError(
                 "The @resource decorator was used incorrectly. "
@@ -334,13 +344,50 @@ class DurableMCP(fastmcp.FastMCP):
     def add_resource(self, resource: fastmcp.resources.Resource) -> None:
         """Overrides `FastMCP.add_resource`."""
         # Where as `add_tool()` is a great insertion point,
-        # `add_resource` gives us and already modified function which
+        # `add_resource` gives us an already modified function which
         # does not pickle to the child process by default. This
         # probably isn't an issue as mostly folks will just use the
         # decorator, but if it is, we can try extracting everything
         # from `resource`? We also have to override the `resource()`
         # decorator anyway to get templates.
         raise NotImplementedError("Use `resource()` decorator instead")
+
+
+    def prompt(
+        self,
+        name: str | None = None,
+        title: str | None = None,
+        description: str | None = None,
+    ) -> Callable[[mcp.types.AnyFunction], mcp.types.AnyFunction]:
+        # Check if user passed function directly instead of calling decorator.
+        if callable(name):
+            raise TypeError(
+                "The @prompt decorator was used incorrectly. "
+                "Did you forget to call it? Use @prompt() instead of @prompt"
+            )
+
+        def decorator(func: mcp.types.AnyFunction) -> mcp.types.AnyFunction:
+            self._prompts.append(
+                Prompt(
+                    func=func,
+                    name=name,
+                    title=title,
+                    description=description,
+                ),
+            )
+            return func
+
+        return decorator
+
+    def add_prompt(self, prompt: fastmcp.prompts.Prompt) -> None:
+        """Overrides `FastMCP.add_prompt`."""
+        # Where as `add_tool()` is a great insertion point,
+        # `add_prompt` gives us an already modified function which
+        # does not pickle to the child process by default. This
+        # probably isn't an issue as mostly folks will just use the
+        # decorator, but if it is, we can try extracting everything
+        # from `prompt`?
+        raise NotImplementedError("Use `prompt()` decorator instead")
 
     def add_tool(
         self,
@@ -369,6 +416,7 @@ class DurableMCP(fastmcp.FastMCP):
             _streamable_http_app,
             self._path,
             self._resources,
+            self._prompts,
             self._tools,
         )
 
@@ -376,6 +424,7 @@ class DurableMCP(fastmcp.FastMCP):
 def _streamable_http_app(
     path: str,
     resources: list[Resource],
+    prompts: list[Prompt],
     tools: list[Tool],
     external_context_from_request: Callable[[Request], ExternalContext],
 ):
@@ -389,6 +438,13 @@ def _streamable_http_app(
             description=resource.description,
             mime_type=resource.mime_type,
         )(resource.fn)
+
+    for prompt in prompts:
+        mcp.prompt(
+            name=prompt.name,
+            title=prompt.title,
+            description=prompt.description,
+        )(prompt.func)
 
     for tool in tools:
         mcp.add_tool(

@@ -35,8 +35,8 @@ pytest tests
 - [x] `initialize`
 - [x] `tools/call`
 - [x] `tools/list`
-- [ ] `prompts/get`
-- [ ] `prompts/list`
+- [x] `prompts/get`
+- [x] `prompts/list`
 - [x] `resources/list`
 - [x] `resources/read`
 - [x] `resources/templates/list`
