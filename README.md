@@ -47,10 +47,11 @@ pytest tests
 
 ### Supported client --> server _notifications_:
 - [x] `notifications/initialized`
+- [ ] `notifications/progress` (for server initiated requests, e.g., elicitation)
 - [ ] `notifications/roots/list_changed`
 
 ### Supported client <-- server _requests_:
-- [ ] `elicitation/create`
+- [x] `elicitation/create`
 - [ ] `roots/list`
 - [ ] `sampling/createMessage`
 

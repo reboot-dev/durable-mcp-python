@@ -36,27 +36,32 @@ def get_stream_id(message: SessionMessage) -> StreamId:
 
 
 def get_event_id(message: SessionMessage) -> EventId:
-    if isinstance(message.message.root, mcp.types.JSONRPCRequest):
-        return str(message.message.root.id)
-
-    if isinstance(message.message.root, mcp.types.JSONRPCNotification):
-        if (
-            message.message.root.params is not None and
-            "_meta" in message.message.root.params and
-            "rebootEventId" in message.message.root.params["_meta"]
+    try:
+        if isinstance(
+            message.message.root,
+            mcp.types.JSONRPCRequest | mcp.types.JSONRPCNotification,
         ):
+            assert (
+                message.message.root.params is not None and
+                "_meta" in message.message.root.params and
+                "rebootEventId" in message.message.root.params["_meta"]
+            ), f"Missing event ID for {message.message.root}"
+
             return message.message.root.params["_meta"]["rebootEventId"]
 
-        # TODO: remove this once we've properly added a reboot event
-        # ID for all notifications and then assert as much here.
-        return uuid4().hex
+        assert isinstance(
+            message.message.root,
+            mcp.types.JSONRPCResponse | mcp.types.JSONRPCError,
+        )
 
-    assert isinstance(
-        message.message.root,
-        mcp.types.JSONRPCResponse | mcp.types.JSONRPCError,
-    )
-
-    return str(message.message.root.id)
+        # This is the original request ID which is sufficient for
+        # differentiation.
+        return str(message.message.root.id)
+    except:
+        # TODO: remove once we've support for all types of `message`s
+        import traceback
+        traceback.print_exc()
+        raise
 
 
 def qualified_event_id(stream_id: StreamId, event_id: EventId) -> EventId:

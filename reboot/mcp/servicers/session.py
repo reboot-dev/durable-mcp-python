@@ -51,11 +51,26 @@ class SessionServicer(Session.Servicer):
     def __init__(self):
         self._request_streams: dict[mcp.types.RequestId, Streams] = {}
 
+        # For requests coming from the server, e.g., elicit, sample,
+        # etc, this maps the event ID that we generated to a tuple of
+        # the server generated request ID and the "related request ID"
+        # for looking up the stream to send the response.
+        self._write_request_ids: dict[
+            str,
+            # (server generated request ID, related request ID)
+            tuple[mcp.types.RequestId, mcp.types.RequestId]
+        ] = {}
+
     def authorizer(self):
         return allow()
 
     @contextmanager
     def _get_request_streams(self, request_id: mcp.types.RequestId):
+        # `mcp.types.RequestId` is of type `str | int`, and it seems
+        # the mcp SDK sometimes uses a `str` and sometimes uses an
+        # `int` for the _same_ request ID, e.g., `1`, so we always
+        # need to canonicalize it as a `str`.
+        request_id = str(request_id)
         try:
             if request_id not in self._request_streams:
                 # Create streams for communicating with MCP server.
@@ -117,6 +132,17 @@ class SessionServicer(Session.Servicer):
 
                         event_id = get_event_id(write_message)
 
+                        # If this is a request, we need to grab the
+                        # request ID and map it to something else that
+                        # we actually send so that we can reconnect it
+                        # here.
+                        if isinstance(write_message.message.root, mcp.types.JSONRPCRequest):
+                            write_request_id = write_message.message.root.id
+                            write_message.message.root.id = event_id
+                            related_request_id = write_message.metadata.related_request_id
+                            assert related_request_id is not None
+                            self._write_request_ids[event_id] = (write_request_id, related_request_id)
+
                         await stream.per_workflow(event_id).Put(
                             context,
                             event_id=event_id,
@@ -141,18 +167,38 @@ class SessionServicer(Session.Servicer):
 
                 logger.debug(f"Completed ({type(message).__name__}): {message}")
 
-        else:
-            if isinstance(message.message.root, mcp.types.JSONRPCNotification):
-                # Ignore "notifications/initialized" as we run the
-                # servers with `stateless=True` here so they are
-                # always initialized.
-                if message.message.root.method == "notifications/initialized":
-                    return HandleMessageResponse()
+                return HandleMessageResponse()
 
-                # TODO: handle notification or route to the
-                # appropriate request stream if relevant.
+        elif isinstance(message.message.root, mcp.types.JSONRPCNotification):
+            # Ignore "notifications/initialized" as we run the
+            # servers with `stateless=True` here so they are
+            # always initialized.
+            if message.message.root.method == "notifications/initialized":
+                return HandleMessageResponse()
 
-            logger.warning(f"UNIMPLEMENTED ({type(message).__name__}): {message}")
+            # TODO: handle notification or route to the
+            # appropriate request stream if relevant.
+
+        elif isinstance(message.message.root, mcp.types.JSONRPCResponse):
+            # We override outgoing request IDs with our own event IDs
+            # to make them unique and routable, and they are always
+            # strings so we ensure that here.
+            event_id = str(message.message.root.id)
+
+            request_id, related_request_id = self._write_request_ids[event_id]
+
+            message.message.root.id = request_id
+
+            with self._get_request_streams(
+                related_request_id,
+            ) as (read_stream, _):
+                read_stream_send, _ = read_stream
+
+                await read_stream_send.send(message)
+
+            return HandleMessageResponse()
+
+        logger.warning(f"UNIMPLEMENTED ({type(message).__name__}): {message}")
 
         return HandleMessageResponse()
 

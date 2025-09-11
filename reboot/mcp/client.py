@@ -7,7 +7,7 @@ import httpx
 import mcp
 import mcp.types
 from contextlib import asynccontextmanager
-from mcp.client.session import MessageHandlerFnT
+from mcp.client.session import ElicitationFnT, MessageHandlerFnT
 from mcp.client.streamable_http import streamablehttp_client
 from mcp.server.streamable_http import (
     MCP_PROTOCOL_VERSION_HEADER,
@@ -50,6 +50,7 @@ async def connect(
     *,
     headers: dict[str, str] | None = None,
     terminate_on_close: bool = True,
+    elicitation_callback: ElicitationFnT | None = None,
     message_handler: MessageHandlerFnT | None = None,
 ) -> AsyncIterator[tuple[mcp.ClientSession, str, str | int]]:
     async with streamablehttp_client(
@@ -61,6 +62,7 @@ async def connect(
         async with mcp.ClientSession(
             read_stream,
             write_stream,
+            elicitation_callback=elicitation_callback,
             message_handler=message_handler,
         ) as session:
             result = await session.initialize()
@@ -83,16 +85,23 @@ async def reconnect(
     protocol_version: str | int,
     next_request_id: int,
     terminate_on_close: bool = True,
+    elicitation_callback: ElicitationFnT | None = None,
     message_handler: MessageHandlerFnT | None = None,
 ) -> AsyncIterator[mcp.ClientSession]:
     headers: dict[str, Any] = {}
     headers[MCP_SESSION_ID_HEADER] = session_id
     headers[MCP_PROTOCOL_VERSION_HEADER] = protocol_version
-    async with connect(
+    async with streamablehttp_client(
         url,
         headers=headers,
         terminate_on_close=terminate_on_close,
-        message_handler=message_handler,
-    ) as (session, _, _):
-        session._request_id = next_request_id
-        yield session
+        httpx_client_factory=create_mcp_http_client,
+    ) as (read_stream, write_stream, get_session_id):
+        async with mcp.ClientSession(
+            read_stream,
+            write_stream,
+            elicitation_callback=elicitation_callback,
+            message_handler=message_handler,
+        ) as session:
+            session._request_id = next_request_id
+            yield session

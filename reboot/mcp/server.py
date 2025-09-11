@@ -8,11 +8,20 @@ import pickle
 from dataclasses import dataclass
 from log.log import get_logger, set_log_level
 from mcp.server import fastmcp
+from mcp.server.elicitation import (
+    AcceptedElicitation,
+    CancelledElicitation,
+    DeclinedElicitation,
+    ElicitationResult,
+    ElicitSchemaModelT,
+    _validate_elicitation_schema,
+)
 from mcp.server.session import ServerSession
 from mcp.server.streamable_http import (
     MCP_SESSION_ID_HEADER,
     StreamableHTTPServerTransport,
 )
+from mcp.shared.message import ServerMessageMetadata
 from rbt.mcp.v1.session_rbt import Session
 from reboot.aio.contexts import WorkflowContext
 from reboot.aio.external import ExternalContext
@@ -23,9 +32,11 @@ from reboot.mcp.servicers.session import (
     _servers,
     _context,
 )
+from reboot.aio.workflows import at_least_once
 from reboot.mcp.servicers.stream import StreamServicer
 from reboot.std.collections.v1 import sorted_map
 from rebootdev.aio.headers import CONSENSUS_ID_HEADER, STATE_REF_HEADER
+from rebootdev.memoize.v1.memoize_rbt import Memoize
 from starlette.applications import Starlette
 from starlette.requests import Request
 from starlette.responses import Response, StreamingResponse
@@ -200,6 +211,41 @@ class ToolContextProtocol(Protocol):
     async def error(self, message: str) -> None:
         """Send an error log message."""
         ...
+
+    async def elicit(
+        self,
+        message: str,
+        schema: type[ElicitSchemaModelT],
+    ) -> ElicitationResult:
+         """
+         Elicit information from the client/user.
+
+        This method can be used to interactively ask for additional
+        information from the client within a tool's execution. The
+        client might display the message to the user and collect a
+        response according to the provided schema. Or in case a client
+        is an agent, it might decide how to handle the elicitation --
+        either by asking the user or automatically generating a
+        response.
+
+        Args:
+            schema: A Pydantic model class defining the expected
+                    response structure, according to the
+                    specification, only primive types are allowed.
+            message: Optional message to present to the user. If not
+                     provided, will use a default message based on the
+                     schema
+
+        Returns:
+            An ElicitationResult containing the action taken and the
+            data if accepted
+
+        Note:
+            Check the result.action to determine if the user accepted,
+            declined, or cancelled.  The result.data will only be
+            populated if action is "accept" and validation succeeded.
+         """
+         ...
 
 
 class ToolContext(WorkflowContext, ToolContextProtocol):
@@ -563,6 +609,107 @@ def _wrap_tool(fn: mcp.types.AnyFunction) -> mcp.types.AnyFunction:
             await self.log("error", message)
 
         context.error = MethodType(error, context)  # type: ignore[method-assign]
+
+        async def elicit(
+            self,
+            message: str,
+            schema: type[ElicitSchemaModelT],
+        ) -> ElicitationResult:
+            event_alias = (
+                f"elicit(message='{message}', schema={type(schema).__name__})"
+            )
+
+            assert context is not None
+
+            if context.within_loop():
+                event_alias += f" #{context.task.iteration}"
+
+            if event_alias in self._event_aliases:
+                raise TypeError(
+                    "Looks like you're trying to `elicit()` "
+                    "more than once with the same arguments"
+                )
+
+            self._event_aliases.add(event_alias)
+
+            workflow_id = context.workflow_id
+
+            assert workflow_id is not None
+
+            memoize = Memoize.ref(uuid5(workflow_id, event_alias).hex)
+
+            # Initial reset, only done once per workflow, we've
+            # already accounted for a possible loop iteration in
+            # the `event_alias` above.
+            await memoize.per_workflow(event_alias).Reset(context)
+
+            status = await memoize.always().Status(context)
+
+            if not status.started:
+                await memoize.always().Start(context)
+            else:
+                message = (
+                    f"Sorry, we got disconnected and need to try again: {message}"
+                )
+
+            async def send_request_and_wait_for_result():
+                # Generate a unique and _random_ ID for this event because
+                # we want to send it _everytime_ since the client is not
+                # also durable.
+                event_id = uuid4().hex
+
+                # THIS CODE IS MORE OR LESS COPIED FROM
+                # `mcp.server.elicitation.elicit_with_validation()`
+                # because there was not a good way to override that
+                # functionality.
+                #
+                # Validate that schema only contains primitive types and
+                # fail loudly if not.
+                _validate_elicitation_schema(schema)
+
+                json_schema = schema.model_json_schema()
+
+                return await ctx.session.send_request(
+                    mcp.types.ServerRequest(
+                        mcp.types.ElicitRequest(
+                            method="elicitation/create",
+                            params=mcp.types.ElicitRequestParams(
+                                message=message,
+                                requestedSchema=json_schema,
+                                _meta=mcp.types.RequestParams.Meta(
+                                    rebootEventId=str(event_id),
+                                ),
+                            ),
+                        )
+                    ),
+                    mcp.types.ElicitResult,
+                    metadata=ServerMessageMetadata(
+                        related_request_id=ctx.request_id,
+                    ),
+                )
+
+            result = await at_least_once(
+                "Send request, wait for result",
+                context,
+                send_request_and_wait_for_result,
+                type=mcp.types.ElicitResult,
+            )
+
+            if result.action == "accept" and result.content:
+                # Validate and parse the content using the schema.
+                validated_data = schema.model_validate(result.content)
+                return AcceptedElicitation(data=validated_data)
+            elif result.action == "decline":
+                return DeclinedElicitation()
+            elif result.action == "cancel":
+                return CancelledElicitation()
+            else:
+                # This should never happen, but handle it just in case.
+                raise ValueError(
+                    f"Unexpected elicitation action: {result.action}"
+                )
+
+        context.elicit = MethodType(elicit, context)  # type: ignore[method-assign]
 
         for context_parameter_name in context_parameter_names:
             kwargs[context_parameter_name] = context
