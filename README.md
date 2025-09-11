@@ -68,6 +68,7 @@ pytest tests
 
 ### TODO:
 - [x] `EventStore` support for resumability
+- [ ] Auth
 - [ ] Docs
 - [ ] `yapf`
 - [x] Push to `durable-mcp` in pypi.org
