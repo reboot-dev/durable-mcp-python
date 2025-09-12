@@ -97,9 +97,8 @@ We recommend you move all of your command line args to a `.rbtrc`:
 # For example, to add args for running `rbt dev run`
 # you can add lines that start with `dev run`. You can add
 # one or more args to each line.
-
-dev run --python
-dev run --application=path/to/your/main.py
+dev run --no-generate-watch
+dev run --python --application=path/to/your/main.py
 dev run --watch=path/to/**/*.py --watch=different/path/to/**/*.py
 ```
 
@@ -123,8 +122,9 @@ URL = "http://localhost:9991"
 
 
 async def main():
-    # Connect is a helper around creating a streamable HTTP client and
-    # session from the MCP SDK, you can also use those if you prefer!
+    # `connect()` is a helper that creates a streamable HTTP client
+    # and session using the MCP SDK. You can also write a client the
+    # direclty uses the MCP SDK you prefer!
     async with connect(URL + "/mcp") as (
         session, session_id, protocol_version
     ):
