@@ -3,32 +3,70 @@
 A framework for building _durable_ MCP servers.
 
 * Takes advantage of the protocols ability to resume after
-  disconnection.
+  disconnection, e.g., due to the server getting rebooted.
 
-* Allows for the server itself to be restarted(!) and any existing
-  requests to be retried safely thanks to Reboot workflows.
+* Any existing requests will be retried safely using Reboot workflows.
 
-*THIS IS IN PRE-ALPHA STAGE, EXPECT CHANGES, BUG FIXES, ETC; DO NOT RUN IN PRODUCTION!*
+* Using Reboot you can run multiple replicas of your server, and
+  session messages will always be routed to the same replica.
 
-First grab all dependencies:
+### Requirements
+- Linux and macOS
+- Python >= 3.12
+- Docker
+
+### Install
+
+Using `uv`:
+
 ```console
-uv sync
+uv add durable-mcp
 ```
-Activate the `venv`:
+
+Using `pip`:
+
+```
+pip install durable-mcp
+```
+
+### Run your application
+
+Activate the `venv` (set up either via `uv` or `python -m venv venv`):
+
 ```console
 source .venv/bin/activate
 ```
-Generate code:
-```console
-rbt generate
-```
+
 Make sure you have Docker running:
+
 ```console
 docker ps
 ```
-And run the test(s):
+
+And run your app:
+
 ```console
-pytest tests
+rbt dev run --python --application=path/to/your/main.py
+```
+
+If you want the application to be restarted when you modify your files
+you can add one or more `--watch=path/to/**/*.py` to the above command
+line.
+
+To simplify you can move all command line args to a `.rbtrc`.
+
+```
+# This file will aggregate all of the command line args
+# into a single command line that will be run when you
+# use `rbt`.
+#
+# For example, to add args for running `rbt dev run`
+# you can add lines that start with `dev run`. You can add
+# one or more args to each line.
+
+dev run --python
+dev run --application=path/to/your/main.py
+dev run --watch=path/to/**/*.py --watch=different/path/to/**/*.py
 ```
 
 ### Supported client --> server _requests_:
@@ -73,3 +111,36 @@ pytest tests
 - [ ] `yapf`
 - [x] Push to `durable-mcp` in pypi.org
 - [ ] Pydantic `state` for each session
+
+
+### Contributing
+
+First grab all dependencies:
+
+```console
+uv sync
+```
+
+Activate the `venv`:
+
+```console
+source .venv/bin/activate
+```
+
+Generate code:
+
+```console
+rbt generate
+```
+
+Make sure you have Docker running:
+
+```console
+docker ps
+```
+
+Make your changes and run the tests:
+
+```console
+pytest tests
+```
