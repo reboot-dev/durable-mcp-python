@@ -13,7 +13,7 @@ mcp = DurableMCP(path="/mcp")
 
 @mcp.tool()
 async def add(a: int, b: int, context: ToolContext) -> int:
-    """Add two numbers and also store result in `SortedMap`."""
+    """Add two numbers."""
     return a + b
 
 

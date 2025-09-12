@@ -60,11 +60,14 @@ exclude = [
     ".mypy.ini",
     ".pytest.ini"
 ]
-only-include = ["reboot", "api"]
+include = ["reboot", "api"]
 
 [tool.hatch.build.sources]
 "api/rbt" = "rbt"
 "api/google" = "google"
+
+[tool.hatch.build.targets.wheel]
+packages = ["reboot", "rbt", "google"]
 
 [tool.mypy]
 python_version = "3.12"
