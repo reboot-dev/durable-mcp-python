@@ -55,11 +55,12 @@ mcp = DurableMCP(path="/mcp")
 @mcp.tool()
 async def add(a: int, b: int, context: ToolContext) -> int:
     """Add two numbers and also store result in `SortedMap`."""
+    result = a + b
     await SortedMap.ref("adds").Insert(
         context,
-        entries={f"{a} + {b}": f"{a + b}".encode()},
+        entries={f"{a} + {b}": f"{result}".encode()},
     )
-    return a + b
+    return result
 
 
 async def main():
@@ -79,7 +80,7 @@ if __name__ == '__main__':
 You can run the server via:
 
 ```console
-rbt dev run --python --application=path/to/your/main.py --working-directory=. --no-generate-watch
+rbt dev run --python --application=path/to/main.py --working-directory=. --no-generate-watch
 ```
 
 While developing you can tell `rbt` to restart your server when you
