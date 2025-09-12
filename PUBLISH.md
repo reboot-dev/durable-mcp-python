@@ -50,8 +50,8 @@ twine check dist/*
 twine upload dist/*
 ```
 
-7. Push tag:
+7. Push all local tags:
 
 ```console
-git push --follow-tags origin main
+git push --tags origin
 ```
