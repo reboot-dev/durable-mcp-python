@@ -89,7 +89,7 @@ above command line.
 
 We recommend you move all of your command line args to a `.rbtrc`:
 
-```
+```bash
 # This file will aggregate all of the command line args
 # into a single command line that will be run when you
 # use `rbt`.
