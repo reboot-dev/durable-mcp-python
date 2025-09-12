@@ -136,6 +136,18 @@ if __name__ == '__main__':
     asyncio.run(main())
 ```
 
+### Debugging
+
+Start by enabling debug logging:
+
+```python
+mcp = DurableMCP(path="/mcp", log_level="DEBUG")
+```
+
+Then consider wrapping your tool/prompt/etc functions in a
+`try`/`except` because the MCP SDK will "swallow" errors and all that
+the client gets back is just that the request failed.
+
 ### Supported client --> server _requests_:
 - [x] `initialize`
 - [x] `tools/call`
