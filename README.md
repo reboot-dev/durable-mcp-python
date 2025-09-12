@@ -172,12 +172,12 @@ if __name__ == '__main__':
 - [ ] `notifications/cancelled`
 
 ### TODO:
-- [x] `EventStore` support for resumability
+- [ ] Add examples of using `at_least_once` and `at_most_once`
 - [ ] Add examples of how to test via `Reboot().start/up/down/stop()`
+- [ ] Add example of rebooting server using MCP Inspector once [modelcontextprotocol/inspector#787](https://github.com/modelcontextprotocol/inspector/pull/787) is included in a release
 - [ ] Auth
-- [ ] Docs
+- [ ] Docs at `docs.reboot.dev`
 - [ ] `yapf`
-- [x] Push to `durable-mcp` in pypi.org
 - [ ] Pydantic `state` for each session
 
 
