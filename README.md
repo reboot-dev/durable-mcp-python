@@ -45,7 +45,7 @@ Instead of using `FastMCP` from the MCP SDK, you use
 ```python
 import asyncio
 from reboot.aio.applications import Application
-from reboot.mcp.server import DurableMCP, ToolContext
+from reboot.mcp.server import DurableContext, DurableMCP
 from reboot.std.collections.v1.sorted_map import SortedMap
 
 # `DurableMCP` server which will handle HTTP requests at path "/mcp".
@@ -53,7 +53,7 @@ mcp = DurableMCP(path="/mcp")
 
 
 @mcp.tool()
-async def add(a: int, b: int, context: ToolContext) -> int:
+async def add(a: int, b: int, context: DurableContext) -> int:
     """Add two numbers and also store result in `SortedMap`."""
     result = a + b
     await SortedMap.ref("adds").Insert(

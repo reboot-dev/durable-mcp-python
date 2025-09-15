@@ -5,14 +5,14 @@ from mcp.shared.message import ClientMessageMetadata
 from reboot.aio.applications import Application
 from reboot.aio.tests import Reboot
 from reboot.mcp.client import connect, reconnect
-from reboot.mcp.server import DurableMCP, ToolContext
+from reboot.mcp.server import DurableMCP
 
 # `DurableMCP` server which will handle HTTP requests at path "/mcp".
 mcp = DurableMCP(path="/mcp")
 
 
 @mcp.tool()
-async def add(a: int, b: int, context: ToolContext) -> int:
+async def add(a: int, b: int) -> int:
     """Add two numbers."""
     return a + b
 

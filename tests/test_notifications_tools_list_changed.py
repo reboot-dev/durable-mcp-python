@@ -6,7 +6,7 @@ from mcp.shared.session import RequestResponder
 from reboot.aio.applications import Application
 from reboot.aio.tests import Reboot
 from reboot.mcp.client import connect, reconnect
-from reboot.mcp.server import DurableMCP, ToolContext
+from reboot.mcp.server import DurableContext, DurableMCP
 from reboot.std.collections.v1.sorted_map import SortedMap
 
 finish_event = asyncio.Event()
@@ -16,7 +16,7 @@ mcp = DurableMCP(path="/mcp")
 
 
 @mcp.tool()
-async def add(a: int, b: int, context: ToolContext) -> int:
+async def add(a: int, b: int, context: DurableContext) -> int:
     """Add two numbers and also store result in `SortedMap`."""
     # `ToolContext` can be used for making Reboot specific calls, can
     # also use `at_least_once`, `at_most_once`, `until`, etc!

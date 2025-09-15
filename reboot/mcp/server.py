@@ -164,7 +164,7 @@ class DurableSession:
         )
 
 
-class ToolContextProtocol(Protocol):
+class DurableContextProtocol(Protocol):
 
     _event_aliases: set[str]
 
@@ -254,7 +254,7 @@ class ToolContextProtocol(Protocol):
          ...
 
 
-class ToolContext(WorkflowContext, ToolContextProtocol):
+class DurableContext(WorkflowContext, DurableContextProtocol):
 
     pass
 
@@ -637,10 +637,10 @@ def _wrap_tool(fn: mcp.types.AnyFunction) -> mcp.types.AnyFunction:
             issubclass(annotation, fastmcp.Context)
         ):
             raise TypeError(
-                "`DurableMCP` only injects `ToolContext` not `Context`")
+                "`DurableMCP` only injects `DurableContext` not `Context`")
         if (
             isinstance(annotation, type) and
-            issubclass(annotation, ToolContext)
+            issubclass(annotation, DurableContext)
         ):
             context_parameter_names.append(parameter_name)
         else:
@@ -656,14 +656,14 @@ def _wrap_tool(fn: mcp.types.AnyFunction) -> mcp.types.AnyFunction:
 
         # To account for the lack of "intersection" types in
         # Python (which is actively being worked on), we instead
-        # create a new dynamic `ToolContext` instance that
+        # create a new dynamic `DurableContext` instance that
         # inherits from the instance of `WorkflowContext` that we
         # already have.
-        context.__class__ = ToolContext
+        context.__class__ = DurableContext
 
-        context = cast(ToolContext, context)
+        context = cast(DurableContext, context)
 
-        # Now we add the `ToolContextProtocol` properties.
+        # Now we add the `DurableContextProtocol` properties.
         context._event_aliases = set()
 
         context.session = DurableSession(ctx.session, context)
