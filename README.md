@@ -65,12 +65,7 @@ async def add(a: int, b: int, context: DurableContext) -> int:
 
 async def main():
     # Reboot application that runs everything necessary for `DurableMCP`.
-    application = Application(servicers=mcp.servicers())
-
-    # Mounts the server at the path specified.
-    application.http.mount(mcp.path, factory=mcp.streamable_http_app_factory)
-
-    await application.run()
+    await mcp.application().run()
 
 
 if __name__ == '__main__':

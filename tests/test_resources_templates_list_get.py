@@ -19,10 +19,7 @@ def get_greeting(name: str) -> str:
 
 
 # Reboot application that runs everything necessary for `DurableMCP`.
-application = Application(servicers=mcp.servicers())
-
-# Mounts the server at the path specified.
-application.http.mount(mcp.path, factory=mcp.streamable_http_app_factory)
+application: Application = mcp.application()
 
 
 class TestSomething(unittest.IsolatedAsyncioTestCase):

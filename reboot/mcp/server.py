@@ -23,6 +23,7 @@ from mcp.server.streamable_http import (
 )
 from mcp.shared.message import ServerMessageMetadata
 from rbt.mcp.v1.session_rbt import Session
+from reboot.aio.applications import Application
 from reboot.aio.contexts import WorkflowContext
 from reboot.aio.external import ExternalContext
 from reboot.aio.types import StateRef
@@ -551,6 +552,20 @@ class DurableMCP:
                 structured_output=structured_output,
             )
         )
+
+    def application(self) -> Application:
+        """
+        Returns a Reboot `Application` for running the MCP tools,
+        resources, prompts, etc that were defined.
+        """
+        application = Application(servicers=self.servicers())
+
+        application.http.mount(
+            self._path,
+            factory=self.streamable_http_app_factory,
+        )
+
+        return application
 
     @property
     def streamable_http_app_factory(self):
