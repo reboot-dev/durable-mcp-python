@@ -131,6 +131,87 @@ if __name__ == '__main__':
     asyncio.run(main())
 ```
 
+### Performing a side-effect "at least once"
+
+Within your tools (and eventually within your prompts and resources
+too), you can try and perform a side-effect that it is safe to try one
+or more times until success using `at_least_once`. Usually what makes
+it safe to perform one or more times is that you can somehow do it
+_idempotently_, e.g., passing an idempotency key as part of an API
+call. Use `at_least_once` for this, for example:
+
+```python
+from reboot.aio.workflows import at_least_once
+from reboot.mcp.server import DurableContext, DurableMCP
+
+
+# `DurableMCP` server which will handle HTTP requests at path "/mcp".
+mcp = DurableMCP(path="/mcp")
+
+
+@mcp.tool()
+async def add(a: int, b: int, context: DurableContext) -> int:
+
+    async def do_side_effect_idempotently() -> int:
+        """
+        Pretend that we are doing a side-effect that we can try
+        more than once because we can do it idempotently, hence using
+        `at_least_once`.
+        """
+        return a + b
+
+    result = await at_least_once(
+        "Do side-effect _idempotently_",
+        context,
+        do_side_effect_idempotently,
+        type=int,
+    )
+
+    # ...
+```
+
+### Performing a side-effect "at most once"
+
+Within your tools (and eventually within your prompts and resources
+too), you can try and perform a side-effect that can _only_ be tried
+once using `at_most_once`. If you can attempt to perform the
+side-effect more than once always prefer `at_least_once`. Here's an
+example of `at_most_once`:
+
+```python
+from reboot.aio.workflows import at_least_once
+from reboot.mcp.server import DurableContext, DurableMCP
+
+
+# `DurableMCP` server which will handle HTTP requests at path "/mcp".
+mcp = DurableMCP(path="/mcp")
+
+
+@mcp.tool()
+async def add(a: int, b: int, context: DurableContext) -> int:
+
+    async def do_side_effect() -> int:
+        """
+        Pretend that we are doing a side-effect that we can only
+        try to do once because it is not able to be performed
+        idempotently, hence using `at_most_once`.
+        """
+        return a + b
+
+    # NOTE: if we reboot, e.g., due to a hardware failure, within
+    # `do_side_effect()` then `at_most_once` will forever raise with
+    # `AtMostOnceFailedBeforeCompleting` and you will need to handle
+    # appropriately.
+    result = await at_most_once(
+        "Do side-effect",
+        context,
+        do_side_effect,
+        type=int,
+    )
+
+    # ...
+```
+
 ### Debugging
 
 Start by enabling debug logging:
