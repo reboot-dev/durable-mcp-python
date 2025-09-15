@@ -43,7 +43,7 @@ from starlette.responses import Response, StreamingResponse
 from starlette.routing import Route
 from starlette.types import Receive, Scope, Send
 from types import MethodType
-from typing import Any, Callable, Literal, Protocol, cast
+from typing import Any, Callable, Literal, Protocol, TypeAlias, cast
 from uuid import uuid4, uuid5
 
 logger = get_logger(__name__)
@@ -102,8 +102,10 @@ class DurableSession:
                     # TODO: figure out why `mypy` requires
                     # passing `method` which has a default.
                     method="notifications/resources/list_changed",
-                    _meta=mcp.types.NotificationParams.Meta(
-                        rebootEventId=str(event_id),
+                    params=mcp.types.NotificationParams(
+                        _meta=mcp.types.NotificationParams.Meta(
+                            rebootEventId=str(event_id),
+                        ),
                     ),
                 ),
             ),
@@ -126,8 +128,10 @@ class DurableSession:
                     # TODO: figure out why `mypy` requires
                     # passing `method` which has a default.
                     method="notifications/tools/list_changed",
-                    _meta=mcp.types.NotificationParams.Meta(
-                        rebootEventId=str(event_id),
+                    params=mcp.types.NotificationParams(
+                        _meta=mcp.types.NotificationParams.Meta(
+                            rebootEventId=str(event_id),
+                        ),
                     ),
                 ),
             ),
@@ -150,8 +154,10 @@ class DurableSession:
                     # TODO: figure out why `mypy` requires
                     # passing `method` which has a default.
                     method="notifications/prompts/list_changed",
-                    _meta=mcp.types.NotificationParams.Meta(
-                        rebootEventId=str(event_id),
+                    params=mcp.types.NotificationParams(
+                        _meta=mcp.types.NotificationParams.Meta(
+                            rebootEventId=str(event_id),
+                        ),
                     ),
                 ),
             ),
@@ -281,8 +287,20 @@ class Tool:
     structured_output: bool | None
 
 
-class DurableMCP(fastmcp.FastMCP):
+LogLevel: TypeAlias = Literal["DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"]
 
+
+class DurableMCP:
+    """
+    Proxy for `fastmcp.FastMCP`, but wrapping tools, prompts, and
+    resources appropriately to make them durable.
+
+    NOTE: this class explicitly does NOT extend from `fastmcp.FastMCP`
+    so that we don't mislead users into thinking some features are
+    implemented that are not.
+    """
+
+    _log_level: LogLevel
     _resources: list[Resource]
     _prompts: list[Prompt]
     _tools: list[Tool]
@@ -291,10 +309,9 @@ class DurableMCP(fastmcp.FastMCP):
         self,
         *,
         path: str,
-        log_level: Literal["DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"] = "WARNING",
+        log_level: LogLevel = "WARNING",
     ):
-        super().__init__(log_level=log_level)
-
+        self._log_level = log_level
         self._path = path
         self._resources = []
         self._prompts = []
@@ -318,7 +335,43 @@ class DurableMCP(fastmcp.FastMCP):
         description: str | None = None,
         mime_type: str | None = None,
     ) -> Callable[[mcp.types.AnyFunction], mcp.types.AnyFunction]:
-        """Overrides `FastMCP.add_resource`."""
+        """Decorator to register a function as a resource.
+
+        The function will be called when the resource is read to generate its content.
+        The function can return:
+        - str for text content
+        - bytes for binary content
+        - other types will be converted to JSON
+
+        If the URI contains parameters (e.g. "resource://{param}") or the function
+        has parameters, it will be registered as a template resource.
+
+        Args:
+            uri: URI for the resource (e.g. "resource://my-resource" or "resource://{param}")
+            name: Optional name for the resource
+            title: Optional human-readable title for the resource
+            description: Optional description of the resource
+            mime_type: Optional MIME type for the resource
+
+        Example:
+            @server.resource("resource://my-resource")
+            def get_data() -> str:
+                return "Hello, world!"
+
+            @server.resource("resource://my-resource")
+            async get_data() -> str:
+                data = await fetch_data()
+                return f"Hello, world! {data}"
+
+            @server.resource("resource://{city}/weather")
+            def get_weather(city: str) -> str:
+                return f"Weather for {city}"
+
+            @server.resource("resource://{city}/weather")
+            async def get_weather(city: str) -> str:
+                data = await fetch_weather(city)
+                return f"Weather for {city}: {data}"
+        """
         # Check if user passed function directly instead of calling decorator.
         if callable(uri):
             raise TypeError(
@@ -342,7 +395,6 @@ class DurableMCP(fastmcp.FastMCP):
         return decorator
 
     def add_resource(self, resource: fastmcp.resources.Resource) -> None:
-        """Overrides `FastMCP.add_resource`."""
         # Where as `add_tool()` is a great insertion point,
         # `add_resource` gives us an already modified function which
         # does not pickle to the child process by default. This
@@ -359,6 +411,40 @@ class DurableMCP(fastmcp.FastMCP):
         title: str | None = None,
         description: str | None = None,
     ) -> Callable[[mcp.types.AnyFunction], mcp.types.AnyFunction]:
+        """Decorator to register a prompt.
+
+        Args:
+            name: Optional name for the prompt (defaults to function name)
+            title: Optional human-readable title for the prompt
+            description: Optional description of what the prompt does
+
+        Example:
+            @server.prompt()
+            def analyze_table(table_name: str) -> list[Message]:
+                schema = read_table_schema(table_name)
+                return [
+                    {
+                        "role": "user",
+                        "content": f"Analyze this schema:\n{schema}"
+                    }
+                ]
+
+            @server.prompt()
+            async def analyze_file(path: str) -> list[Message]:
+                content = await read_file(path)
+                return [
+                    {
+                        "role": "user",
+                        "content": {
+                            "type": "resource",
+                            "resource": {
+                                "uri": f"file://{path}",
+                                "text": content
+                            }
+                        }
+                    }
+                ]
+        """
         # Check if user passed function directly instead of calling decorator.
         if callable(name):
             raise TypeError(
@@ -380,7 +466,6 @@ class DurableMCP(fastmcp.FastMCP):
         return decorator
 
     def add_prompt(self, prompt: fastmcp.prompts.Prompt) -> None:
-        """Overrides `FastMCP.add_prompt`."""
         # Where as `add_tool()` is a great insertion point,
         # `add_prompt` gives us an already modified function which
         # does not pickle to the child process by default. This
@@ -388,6 +473,64 @@ class DurableMCP(fastmcp.FastMCP):
         # decorator, but if it is, we can try extracting everything
         # from `prompt`?
         raise NotImplementedError("Use `prompt()` decorator instead")
+
+    def tool(
+        self,
+        name: str | None = None,
+        title: str | None = None,
+        description: str | None = None,
+        annotations: mcp.types.ToolAnnotations | None = None,
+        structured_output: bool | None = None,
+    ) -> Callable[[mcp.types.AnyFunction], mcp.types.AnyFunction]:
+        """Decorator to register a tool.
+
+        Tools can optionally request a Context object by adding a parameter with the
+        Context type annotation. The context provides access to MCP capabilities like
+        logging, progress reporting, and resource access.
+
+        Args:
+            name: Optional name for the tool (defaults to function name)
+            title: Optional human-readable title for the tool
+            description: Optional description of what the tool does
+            annotations: Optional ToolAnnotations providing additional tool information
+            structured_output: Controls whether the tool's output is structured or unstructured
+                - If None, auto-detects based on the function's return type annotation
+                - If True, unconditionally creates a structured tool (return type annotation permitting)
+                - If False, unconditionally creates an unstructured tool
+
+        Example:
+            @server.tool()
+            def my_tool(x: int) -> str:
+                return str(x)
+
+            @server.tool()
+            def tool_with_context(x: int, ctx: Context) -> str:
+                ctx.info(f"Processing {x}")
+                return str(x)
+
+            @server.tool()
+            async def async_tool(x: int, context: Context) -> str:
+                await context.report_progress(50, 100)
+                return str(x)
+        """
+        # Check if user passed function directly instead of calling decorator
+        if callable(name):
+            raise TypeError(
+                "The @tool decorator was used incorrectly. Did you forget to call it? Use @tool() instead of @tool"
+            )
+
+        def decorator(fn: mcp.types.AnyFunction) -> mcp.types.AnyFunction:
+            self.add_tool(
+                fn,
+                name=name,
+                title=title,
+                description=description,
+                annotations=annotations,
+                structured_output=structured_output,
+            )
+            return fn
+
+        return decorator
 
     def add_tool(
         self,
@@ -398,7 +541,6 @@ class DurableMCP(fastmcp.FastMCP):
         annotations: mcp.types.ToolAnnotations | None = None,
         structured_output: bool | None = None,
     ) -> None:
-        """Overrides `FastMCP.add_tool`."""
         self._tools.append(
             Tool(
                 fn=fn,
@@ -414,6 +556,7 @@ class DurableMCP(fastmcp.FastMCP):
     def streamable_http_app_factory(self):
         return functools.partial(
             _streamable_http_app,
+            self._log_level,
             self._path,
             self._resources,
             self._prompts,
@@ -422,13 +565,14 @@ class DurableMCP(fastmcp.FastMCP):
 
 
 def _streamable_http_app(
+    log_level: LogLevel,
     path: str,
     resources: list[Resource],
     prompts: list[Prompt],
     tools: list[Tool],
     external_context_from_request: Callable[[Request], ExternalContext],
 ):
-    mcp = fastmcp.FastMCP()
+    mcp = fastmcp.FastMCP(log_level=log_level)
 
     for resource in resources:
         mcp.resource(
