@@ -57,3 +57,7 @@ git push --tags origin
 ```
 
 8. Update GitHub releases
+
+Go to https://github.com/reboot-dev/durable-mcp-python/releases/new
+and create a new release for the version just published. See other
+examples for what you can put in the release notes.
