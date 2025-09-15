@@ -1,4 +1,4 @@
-## Publishing to PyPI
+## Make a release, publish to PyPI
 
 0. Generate Reboot code
 
@@ -55,3 +55,5 @@ twine upload dist/*
 ```console
 git push --tags origin
 ```
+
+8. Update GitHub releases
