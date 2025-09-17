@@ -260,7 +260,7 @@ the client gets back is just that the request failed.
 - [ ] `notifications/cancelled`
 
 ### TODO:
-- [ ] Add examples of using `at_least_once` and `at_most_once`
+- [ ] Adding tools, resources, and prompts dynamically
 - [ ] Add examples of how to test via `Reboot().start/up/down/stop()`
 - [ ] Add example of rebooting server using MCP Inspector version [0.16.7](https://github.com/modelcontextprotocol/inspector/releases/tag/0.16.7) which includes [modelcontextprotocol/inspector#787](https://github.com/modelcontextprotocol/inspector/pull/787)
 - [ ] Auth
