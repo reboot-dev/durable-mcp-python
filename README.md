@@ -11,7 +11,7 @@ A framework for building _durable_ MCP servers.
   session messages will always be routed to the same replica.
 
 ### Requirements
-- Linux and macOS
+- macOS or Linux
 - Python >= 3.12.11
 - Docker
 
