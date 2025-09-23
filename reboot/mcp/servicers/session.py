@@ -1,7 +1,7 @@
+import anyio
 import mcp.types
 import pickle
 from contextvars import ContextVar
-from anyio import create_memory_object_stream
 from anyio.streams.memory import (
     MemoryObjectReceiveStream,
     MemoryObjectSendStream,
@@ -76,9 +76,10 @@ class SessionServicer(Session.Servicer):
                 # Create streams for communicating with MCP server.
                 self._request_streams[request_id] = Streams(
                     refs=1,  # Initial reference count.
-                    read_stream=create_memory_object_stream[
+                    read_stream=anyio.create_memory_object_stream[
                         SessionMessage | Exception](),
-                    write_stream=create_memory_object_stream[SessionMessage](),
+                    write_stream=anyio.create_memory_object_stream[
+                        SessionMessage](),
                 )
             else:
                 self._request_streams[request_id].refs += 1
@@ -121,8 +122,13 @@ class SessionServicer(Session.Servicer):
                 )
 
                 async def send_and_receive():
-
-                    await read_stream_send.send(message)
+                    try:
+                        await read_stream_send.send(message)
+                    except anyio.ClosedResourceError:
+                        # Stream is closed, we must be re-executing
+                        # this function due to effect validation, just
+                        # return.
+                        return
 
                     async for write_message in write_stream_receive:
                         logger.debug(
@@ -141,7 +147,9 @@ class SessionServicer(Session.Servicer):
                             write_message.message.root.id = event_id
                             related_request_id = write_message.metadata.related_request_id
                             assert related_request_id is not None
-                            self._write_request_ids[event_id] = (write_request_id, related_request_id)
+                            self._write_request_ids[event_id] = (
+                                write_request_id, related_request_id
+                            )
 
                         await stream.per_workflow(event_id).Put(
                             context,
@@ -153,6 +161,7 @@ class SessionServicer(Session.Servicer):
                             write_message.message.root,
                             mcp.types.JSONRPCResponse | mcp.types.JSONRPCError,
                         ):
+                            await read_stream_send.aclose()
                             break
 
                 await at_least_once(
@@ -161,8 +170,10 @@ class SessionServicer(Session.Servicer):
                     send_and_receive,
                 )
 
-                await read_stream_send.aclose()
-
+                # NOTE: need to await `run_task` within the
+                # `self._get_request_streams()` context manager so
+                # that we continue to use the same streams between
+                # this function and `Run()`.
                 await run_task
 
                 logger.debug(f"Completed ({type(message).__name__}): {message}")
@@ -221,10 +232,11 @@ class SessionServicer(Session.Servicer):
             write_stream_send, _ = write_stream
 
             async def server_run():
-                global _servers
-                server = _servers[path]
+                assert _context.get() is None
                 _context.set(context)
                 try:
+                    global _servers
+                    server = _servers[path]
                     await server.run(
                         read_stream_receive,
                         write_stream_send,

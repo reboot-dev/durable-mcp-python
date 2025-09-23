@@ -24,20 +24,21 @@ from mcp.server.streamable_http import (
 from mcp.shared.message import ServerMessageMetadata
 from rbt.mcp.v1.session_rbt import Session
 from reboot.aio.applications import Application
-from reboot.aio.contexts import WorkflowContext
+from reboot.aio.contexts import EffectValidation, WorkflowContext
 from reboot.aio.external import ExternalContext
 from reboot.aio.types import StateRef
+from reboot.aio.workflows import at_least_once
 from reboot.mcp.event_store import DurableEventStore, replay
 from reboot.mcp.servicers.session import (
     SessionServicer,
     _servers,
     _context,
 )
-from reboot.aio.workflows import at_least_once
 from reboot.mcp.servicers.stream import StreamServicer
 from reboot.std.collections.v1 import sorted_map
 from rebootdev.aio.headers import CONSENSUS_ID_HEADER, STATE_REF_HEADER
 from rebootdev.memoize.v1.memoize_rbt import Memoize
+from rebootdev.settings import DOCS_BASE_URL
 from starlette.applications import Starlette
 from starlette.requests import Request
 from starlette.responses import Response, StreamingResponse
@@ -663,12 +664,12 @@ def _wrap_tool(fn: mcp.types.AnyFunction) -> mcp.types.AnyFunction:
 
     wrapper_signature = signature.replace(parameters=wrapper_parameters)
 
-    async def wrapper(ctx: fastmcp.Context, *args, **kwargs):
-
-        context: WorkflowContext | None = _context.get()
-
-        assert context is not None
-
+    async def wrapper(
+        ctx: fastmcp.Context,
+        context: WorkflowContext,
+        *args,
+        **kwargs,
+    ):
         # To account for the lack of "intersection" types in
         # Python (which is actively being worked on), we instead
         # create a new dynamic `DurableContext` instance that
@@ -938,19 +939,49 @@ def _wrap_tool(fn: mcp.types.AnyFunction) -> mcp.types.AnyFunction:
 
             return fn(**dict(bound.arguments))
         except:
-            # TODO: print stack trace after we've fixed `memoize`
-            # effect validation bug.
-            #
-            # import traceback
-            # traceback.print_exc()
+            import traceback
+            traceback.print_exc()
             raise
 
-    setattr(wrapper, "__signature__", wrapper_signature)
-    wrapper.__name__ = fn.__name__
-    wrapper.__doc__ = fn.__doc__
+    async def wrapper_validating_effects(
+        ctx: fastmcp.Context,
+        *args,
+        **kwargs,
+    ):
+        context: WorkflowContext | None = _context.get()
 
-    return wrapper
+        assert context is not None
 
+        # Checkpoint the context since it is the `IdempotencyManager`.
+        checkpoint = context.checkpoint()
+
+        result = await wrapper(ctx, context, *args, **kwargs)
+
+        if context._effect_validation == EffectValidation.DISABLED:
+            return result
+
+        # Effect validation is enabled.
+        logger.info(
+            f"Re-running tool '{fn.__name__}' "
+            f"to validate effects. See {DOCS_BASE_URL}/develop/side_effects "
+            "for more information."
+        )
+
+        # Restore the context to the checkpoint we took above so we
+        # can re-execute `callable` as though it is being retried from
+        # scratch.
+        context.restore(checkpoint)
+
+        # TODO: check if `result` is different (we don't do this for
+        # other effect validation so we're also not doing it now).
+
+        return await wrapper(ctx, context, *args, **kwargs)
+
+    setattr(wrapper_validating_effects, "__signature__", wrapper_signature)
+    wrapper_validating_effects.__name__ = fn.__name__
+    wrapper_validating_effects.__doc__ = fn.__doc__
+
+    return wrapper_validating_effects
 
 
 class StreamableHTTPASGIApp:
