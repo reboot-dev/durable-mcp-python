@@ -1131,7 +1131,14 @@ class StreamableHTTPASGIApp:
                                 ):
                                     await write_stream.send(message)
 
-                            writer_tasks.append(asyncio.create_task(writer()))
+                            writer_task = asyncio.create_task(writer())
+
+                            writer_tasks.append(writer_task)
+
+                            def done(task):
+                                writer_tasks.remove(task)
+
+                            writer_task.add_done_callback(done)
 
                 reader_task = asyncio.create_task(reader())
 
