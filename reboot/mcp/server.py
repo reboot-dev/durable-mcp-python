@@ -1032,6 +1032,10 @@ class StreamableHTTPASGIApp:
                         str(request.url),
                         headers=headers,
                         content=await request.body(),
+                        # Don't worry about timing out, this might be
+                        # a long-lived `GET` for server sent events
+                        # streaming.
+                        timeout=None,
                     ) as upstream:
                         # Create a generator to yield chunks from the
                         # upstream response.
