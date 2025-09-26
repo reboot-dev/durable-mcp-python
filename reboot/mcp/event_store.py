@@ -9,108 +9,105 @@ from mcp.server.streamable_http import (
 )
 from mcp.server.streamable_http import EventStore
 from mcp.shared.message import ServerMessageMetadata, SessionMessage
+from mcp.types import RequestId
+from rbt.mcp.v1.session_rbt import Session
 from rbt.mcp.v1.stream_rbt import Stream
 from reboot.aio.external import ExternalContext
 from uuid import uuid4
 
 
-def get_stream_id(message: SessionMessage) -> StreamId:
-    # Try and extract the ID of the original request.
-    request_id = None
-
+def get_event_id(message: SessionMessage) -> EventId:
     if isinstance(
         message.message.root,
+        mcp.types.JSONRPCRequest | mcp.types.JSONRPCNotification,
+    ):
+        assert (
+            message.message.root.params is not None and
+            "_meta" in message.message.root.params and
+            "rebootEventId" in message.message.root.params["_meta"]
+        ), f"Missing event ID for {message.message.root}"
+
+        return message.message.root.params["_meta"]["rebootEventId"]
+
+    assert isinstance(
+        message.message.root,
         mcp.types.JSONRPCResponse | mcp.types.JSONRPCError,
-    ):
-        request_id = str(message.message.root.id)
-    elif (
-        message.metadata is not None and
-        isinstance(message.metadata, ServerMessageMetadata) and
-        message.metadata.related_request_id is not None
-    ):
-        request_id = str(message.metadata.related_request_id)
+    )
 
-    stream_id = request_id if request_id is not None else GET_STREAM_KEY
-
-    return stream_id
+    # This is the original request ID which is sufficient for
+    # differentiation.
+    return str(message.message.root.id)
 
 
-def get_event_id(message: SessionMessage) -> EventId:
-    try:
-        if isinstance(
-            message.message.root,
-            mcp.types.JSONRPCRequest | mcp.types.JSONRPCNotification,
-        ):
-            assert (
-                message.message.root.params is not None and
-                "_meta" in message.message.root.params and
-                "rebootEventId" in message.message.root.params["_meta"]
-            ), f"Missing event ID for {message.message.root}"
-
-            return message.message.root.params["_meta"]["rebootEventId"]
-
-        assert isinstance(
-            message.message.root,
-            mcp.types.JSONRPCResponse | mcp.types.JSONRPCError,
-        )
-
-        # This is the original request ID which is sufficient for
-        # differentiation.
-        return str(message.message.root.id)
-    except:
-        # TODO: remove once we've support for all types of `message`s
-        import traceback
-        traceback.print_exc()
-        raise
+def qualified_stream_id(*, session_id: str, request_id: RequestId) -> str:
+    return f"{session_id}/{request_id}"
 
 
-def qualified_event_id(stream_id: StreamId, event_id: EventId) -> EventId:
-    return f"{stream_id}/{event_id}"
-
-
-def stream_id_from_qualified_event_id(event_id: EventId) -> StreamId:
-    index = event_id.rfind("/")
-    assert index != -1
-    return event_id[:index]
+def qualified_event_id(*, request_id: RequestId, event_id: EventId) -> EventId:
+    return f"{request_id}/{event_id}"
 
 
 class DurableEventStore(EventStore):
 
-    def __init__(self, context: ExternalContext):
+    def __init__(self, context: ExternalContext, session_id: str):
         self._context = context
+        self._session_id = session_id
 
     async def store_event(
         self,
-        stream_id: StreamId,
+        # MCP SDK uses request IDs for the stream ID, which does not
+        # work across sessions as most clients use incrementing
+        # request IDs for each session. Hence, we call this
+        # `request_id` to differentiate it from our `stream_id` which
+        # we use to get a `Stream` reference.
+        request_id: StreamId,
         message: mcp.types.JSONRPCMessage,
     ) -> EventId:
         event_id = get_event_id(SessionMessage(message=message))
-        assert event_id is not None
-        return qualified_event_id(stream_id, event_id)
+        # Need to qualify event ID to include the request ID which is
+        # used to distinguish streams.
+        return qualified_event_id(request_id=request_id, event_id=event_id)
 
     async def replay_events_after(
         self,
-        last_event_id: EventId,
+        qualified_last_event_id: EventId,
         send_callback: EventCallback,
     ) -> StreamId | None:
-        stream_id = stream_id_from_qualified_event_id(last_event_id)
+        request_id, last_event_id = qualified_last_event_id.split("/")
 
         async for message, event_id in replay(
             self._context,
-            stream_id=stream_id,
+            session_id=self._session_id,
+            request_id=request_id,
             last_event_id=last_event_id,
         ):
-            await send_callback(EventMessage(message.message, event_id))
+            await send_callback(
+                EventMessage(
+                    message.message,
+                    # Need to qualify event ID to include the request
+                    # ID which is used to distinguish streams.
+                    qualified_event_id(
+                        request_id=request_id,
+                        event_id=event_id,
+                    ),
+                )
+            )
 
-        return stream_id
+        return request_id
 
 
 async def replay(
     context: ExternalContext,
     *,
-    stream_id: StreamId,
+    session_id: str,
+    request_id: RequestId,
     last_event_id: EventId | None = None,
 ):
+    stream_id = qualified_stream_id(
+        session_id=session_id,
+        request_id=request_id,
+    )
+
     stream = Stream.ref(stream_id)
 
     # Ensure the stream has been created.
@@ -136,5 +133,3 @@ async def replay(
 
             last_event_id = replay.events[-1].id
             break
-                                    
-

@@ -28,7 +28,11 @@ from reboot.aio.contexts import EffectValidation, WorkflowContext
 from reboot.aio.external import ExternalContext
 from reboot.aio.types import StateRef
 from reboot.aio.workflows import at_least_once
-from reboot.mcp.event_store import DurableEventStore, replay
+from reboot.mcp.event_store import (
+    DurableEventStore,
+    replay,
+    qualified_stream_id,
+)
 from reboot.mcp.servicers.session import (
     SessionServicer,
     _servers,
@@ -1084,7 +1088,7 @@ class StreamableHTTPASGIApp:
         http_transport = StreamableHTTPServerTransport(
             mcp_session_id=mcp_session_id,
             is_json_response_enabled=False,
-            event_store=DurableEventStore(context),
+            event_store=DurableEventStore(context, mcp_session_id),
             security_settings=None,
         )
 
@@ -1131,7 +1135,8 @@ class StreamableHTTPASGIApp:
                             async def writer():
                                 async for message, _ in replay(
                                     context,
-                                    stream_id=str(request_id),
+                                    session_id=session.state_id,
+                                    request_id=request_id,
                                 ):
                                     await write_stream.send(message)
 

@@ -9,7 +9,6 @@ from rbt.mcp.v1.stream_rbt import (
 )
 from reboot.aio.auth.authorizers import allow
 from reboot.aio.contexts import ReaderContext, WriterContext
-from reboot.mcp.event_store import qualified_event_id
 
 
 class StreamServicer(Stream.Servicer):
@@ -31,7 +30,7 @@ class StreamServicer(Stream.Servicer):
     ) -> PutResponse:
         self.state.events.append(
             Event(
-                id=qualified_event_id(context.state_id, request.event_id),
+                id=request.event_id,
                 message_bytes=request.message_bytes,
             )
         )

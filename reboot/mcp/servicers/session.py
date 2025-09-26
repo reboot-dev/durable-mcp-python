@@ -22,7 +22,7 @@ from rbt.mcp.v1.stream_rbt import Stream
 from reboot.aio.auth.authorizers import allow
 from reboot.aio.contexts import WorkflowContext, WriterContext
 from reboot.aio.workflows import at_least_once
-from reboot.mcp.event_store import get_event_id
+from reboot.mcp.event_store import get_event_id, qualified_stream_id
 
 logger = get_logger(__name__)
 
@@ -107,7 +107,12 @@ class SessionServicer(Session.Servicer):
 
             request_id = message.message.root.id
 
-            stream = Stream.ref(str(request_id))
+            stream_id = qualified_stream_id(
+                session_id=context.state_id,
+                request_id=request_id,
+            )
+
+            stream = Stream.ref(stream_id)
 
             with self._get_request_streams(
                 request_id,
@@ -153,6 +158,7 @@ class SessionServicer(Session.Servicer):
 
                         await stream.per_workflow(event_id).Put(
                             context,
+                            request_id=str(request_id),
                             event_id=event_id,
                             message_bytes=pickle.dumps(write_message),
                         )

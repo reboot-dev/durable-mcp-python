@@ -43,8 +43,9 @@ message Event {
 ////////////////////////////////////////////////////////////////////////
 
 message PutRequest {
-  string event_id = 1;
-  bytes message_bytes = 2;
+  string request_id = 1;
+  string event_id = 2;
+  bytes message_bytes = 3;
 }
 
 message PutResponse {}
