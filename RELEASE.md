@@ -16,7 +16,7 @@ git tag 0.x.y
 
 ```console
 TAG=$(git describe --tags --abbrev=0 | sed 's/^v//')
-sed -i "s/^version = \".*\"/version = \"$TAG\"/" pyproject.toml
+sed -i "" "s/^version = \".*\"/version = \"$TAG\"/" pyproject.toml
 git add pyproject.toml && git commit -m "Set version to $TAG"
 ```
 
