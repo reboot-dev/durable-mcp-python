@@ -28,10 +28,6 @@ class StreamServicer(Stream.Servicer):
         context: WriterContext,
         request: PutRequest,
     ) -> PutResponse:
-        print(
-            request.related_request_id
-            if request.HasField("related_request_id") else None
-        )
         self.state.events.append(
             Event(
                 id=request.event_id,
