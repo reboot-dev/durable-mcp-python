@@ -8,6 +8,8 @@ from anyio.streams.memory import (
 )
 from contextlib import contextmanager
 from dataclasses import dataclass
+from google.protobuf.json_format import ParseDict
+from google.protobuf.struct_pb2 import Value
 from log.log import get_logger
 from mcp.server.lowlevel.server import Server
 from mcp.shared.message import SessionMessage
@@ -143,6 +145,11 @@ class SessionServicer(Session.Servicer):
 
                         event_id = get_event_id(write_message)
 
+                        related_request_id = (
+                            write_message.metadata.related_request_id
+                            if write_message.metadata is not None else None
+                        )
+
                         # If this is a request, we need to grab the
                         # request ID and map it to something else that
                         # we actually send so that we can reconnect it
@@ -150,17 +157,30 @@ class SessionServicer(Session.Servicer):
                         if isinstance(write_message.message.root, mcp.types.JSONRPCRequest):
                             write_request_id = write_message.message.root.id
                             write_message.message.root.id = event_id
-                            related_request_id = write_message.metadata.related_request_id
                             assert related_request_id is not None
                             self._write_request_ids[event_id] = (
                                 write_request_id, related_request_id
                             )
 
+                        assert (
+                            related_request_id is None or
+                            type(related_request_id) == str
+                        )
+
                         await stream.per_workflow(event_id).Put(
                             context,
-                            request_id=str(request_id),
                             event_id=event_id,
-                            message_bytes=pickle.dumps(write_message),
+                            # TODO: replace `ParseDict` with
+                            # `from_model` after upgrading Reboot.
+                            message=ParseDict(
+                                write_message.message.model_dump(
+                                    by_alias=True,
+                                    mode="json",
+                                    exclude_none=True,
+                                ),
+                                Value(),
+                            ),
+                            related_request_id=related_request_id,
                         )
 
                         if isinstance(

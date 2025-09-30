@@ -13,6 +13,7 @@ from mcp.types import RequestId
 from rbt.mcp.v1.session_rbt import Session
 from rbt.mcp.v1.stream_rbt import Stream
 from reboot.aio.external import ExternalContext
+from reboot.protobuf import as_dict
 from uuid import uuid4
 
 
@@ -96,13 +97,42 @@ class DurableEventStore(EventStore):
         return request_id
 
 
+def replace_whole_floats_with_ints(d: dict):
+    """
+    Iterates through all values in a dictionary, including nested
+    values, replacing floats that are whole numbers with their integer
+    equivalant.
+
+    This is necessary because according to JSON `1.0` and `1` are
+    considered the _same_ value, but Pydantic does not consider `1.0`
+    a valid `int` when using strict mode. In our case, protobuf always
+    renders the value `1.0` even if it was originally passed `1` and
+    thus Pydantic fails. *sigh*
+    """
+    result: dict = {}
+
+    for key, value in d.items():
+        if isinstance(value, float):
+            if value == int(value):
+                result[key] = int(value)
+                continue
+
+        if isinstance(value, dict):
+            result[key] = replace_whole_floats_with_ints(value)
+            continue
+
+        result[key] = value
+
+    return result
+
+
 async def replay(
     context: ExternalContext,
     *,
     session_id: str,
     request_id: RequestId,
     last_event_id: EventId | None = None,
-):
+) -> tuple[SessionMessage, EventId]:
     stream_id = qualified_stream_id(
         session_id=session_id,
         request_id=request_id,
@@ -123,10 +153,20 @@ async def replay(
                 continue
 
             for event in replay.events:
-                message = pickle.loads(event.message_bytes)
-                yield message, event.id
+                message = mcp.types.JSONRPCMessage.model_validate(
+                    replace_whole_floats_with_ints(as_dict(event.message))
+                )
+
+                metadata = None
+
+                if event.HasField("related_request_id"):
+                    metadata = ServerMessageMetadata()
+                    metadata.related_request_id = event.related_request_id
+
+                yield SessionMessage(message, metadata=metadata), event.id
+
                 if isinstance(
-                    message.message.root,
+                    message.root,
                     mcp.types.JSONRPCResponse | mcp.types.JSONRPCError,
                 ):
                     return
