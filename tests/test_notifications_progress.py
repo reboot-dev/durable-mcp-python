@@ -19,7 +19,7 @@ async def add(a: int, b: int, context: DurableContext) -> int:
     """Add two numbers and also store result in `SortedMap`."""
     # `ToolContext` can be used for making Reboot specific calls, can
     # also use `at_least_once`, `at_most_once`, `until`, etc!
-    await SortedMap.ref("adds").Insert(
+    await SortedMap.ref("adds").insert(
         context,
         entries={f"{a} + {b}": f"{a + b}".encode()},
     )
@@ -160,7 +160,7 @@ class TestSomething(unittest.IsolatedAsyncioTestCase):
                 app_internal=True,
             )
 
-            response = await SortedMap.ref("adds").Range(context, limit=2)
+            response = await SortedMap.ref("adds").range(context, limit=2)
             print(response)
 
 

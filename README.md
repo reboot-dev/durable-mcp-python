@@ -56,7 +56,7 @@ mcp = DurableMCP(path="/mcp")
 async def add(a: int, b: int, context: DurableContext) -> int:
     """Add two numbers and also store result in `SortedMap`."""
     result = a + b
-    await SortedMap.ref("adds").Insert(
+    await SortedMap.ref("adds").insert(
         context,
         entries={f"{a} + {b}": f"{result}".encode()},
     )
