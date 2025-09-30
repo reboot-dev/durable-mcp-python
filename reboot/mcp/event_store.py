@@ -14,6 +14,7 @@ from rbt.mcp.v1.session_rbt import Session
 from rbt.mcp.v1.stream_rbt import Stream
 from reboot.aio.external import ExternalContext
 from reboot.protobuf import as_dict
+from typing import AsyncGenerator
 from uuid import uuid4
 
 
@@ -132,7 +133,7 @@ async def replay(
     session_id: str,
     request_id: RequestId,
     last_event_id: EventId | None = None,
-) -> tuple[SessionMessage, EventId]:
+) -> AsyncGenerator[tuple[SessionMessage, EventId], None]:
     stream_id = qualified_stream_id(
         session_id=session_id,
         request_id=request_id,
