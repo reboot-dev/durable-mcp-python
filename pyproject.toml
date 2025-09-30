@@ -21,7 +21,7 @@ classifiers = [
 ]
 requires-python = ">=3.12.11"
 dependencies = [
-    "reboot==0.37.1",
+    "reboot==0.38.2",
     "mcp==1.13.1",
 ]
 
