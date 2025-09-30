@@ -19,6 +19,11 @@ from rbt.mcp.v1.session_rbt import (
     RunRequest,
     RunResponse,
     Session,
+    Sessions,
+    ListRequest,
+    ListResponse,
+    CreateRequest,
+    CreateResponse,
 )
 from rbt.mcp.v1.stream_rbt import Stream
 from reboot.aio.auth.authorizers import allow
@@ -26,6 +31,15 @@ from reboot.aio.contexts import ReaderContext, WorkflowContext, WriterContext
 from reboot.aio.workflows import at_least_once
 from reboot.mcp.event_store import get_event_id, qualified_stream_id
 from reboot.protobuf import from_model
+from reboot.std.collections.v1.sorted_map import SortedMap
+from uuid7 import create as uuid7
+from reboot.mcp.settings import SORTED_MAP_SESSIONS_INDEX
+from rbt.std.index.v1.index_rbt import (
+    Entry,
+    NodeEntry,
+    Value,
+)
+from reboot.protobuf import unpack
 
 logger = get_logger(__name__)
 
@@ -38,6 +52,54 @@ _context: ContextVar[WorkflowContext | None] = ContextVar(
     "`WorkflowContext` of current message being handled",
     default=None,
 )
+
+
+class SessionsServicer(Sessions.Servicer):
+
+    def authorizer(self):
+        return allow()
+
+    async def Create(
+        self,
+        context: WriterContext,
+        request: CreateRequest,
+    ) -> CreateResponse:
+
+        return CreateResponse()
+
+    async def _entry_from_node_entry(
+        self,
+        node_entries: list[NodeEntry],
+    ) -> list[Entry]:
+        index_entries: list[Entry] = []
+
+        for node_entry in node_entries:
+            index_entry = Entry(key=node_entry.key)
+            value = Value()
+            value.ParseFromString(node_entry.value)
+            if value.HasField("value"):
+                index_entry.value.CopyFrom(value.value)
+            elif value.HasField("bytes"):
+                index_entry.bytes = value.bytes
+            else:
+                assert value.HasField("any")
+                index_entry.any.CopyFrom(value.any)
+            index_entries.append(index_entry)
+
+        return index_entries
+
+    async def List(
+        self,
+        context: ReaderContext,
+        request: ListRequest,
+    ) -> ListResponse:
+        # TODO(riley): make this a real range and paginate.
+        # TODO(riley): handle the case where we don't have a sorted map yet.
+        session_ids_range = await SortedMap.ref(SORTED_MAP_SESSIONS_INDEX
+                                                ).Range(context, limit=500)
+
+        return ListResponse(
+            session_ids=[e.key for e in session_ids_range.entries])
 
 
 @dataclass(kw_only=True)
@@ -61,8 +123,7 @@ class SessionServicer(Session.Servicer):
         self._write_request_ids: dict[
             str,
             # (server generated request ID, related request ID)
-            tuple[mcp.types.RequestId, mcp.types.RequestId]
-        ] = {}
+            tuple[mcp.types.RequestId, mcp.types.RequestId]] = {}
 
     def authorizer(self):
         return allow()
@@ -79,10 +140,10 @@ class SessionServicer(Session.Servicer):
                 # Create streams for communicating with MCP server.
                 self._request_streams[request_id] = Streams(
                     refs=1,  # Initial reference count.
-                    read_stream=anyio.create_memory_object_stream[
-                        SessionMessage | Exception](),
-                    write_stream=anyio.create_memory_object_stream[
-                        SessionMessage](),
+                    read_stream=anyio.
+                    create_memory_object_stream[SessionMessage | Exception](),
+                    write_stream=anyio.
+                    create_memory_object_stream[SessionMessage](),
                 )
             else:
                 self._request_streams[request_id].refs += 1
@@ -103,6 +164,10 @@ class SessionServicer(Session.Servicer):
         context: WorkflowContext,
         request: HandleMessageRequest,
     ) -> HandleMessageResponse:
+        # Add session ID to sessions index.
+        await SortedMap.ref(SORTED_MAP_SESSIONS_INDEX).insert(
+            context, entries={context.state_id: b""})
+
         message = pickle.loads(request.message_bytes)
 
         if isinstance(message.message.root, mcp.types.JSONRPCRequest):
@@ -119,9 +184,8 @@ class SessionServicer(Session.Servicer):
                 """Inline writer that adds this stream to `Session` state."""
                 state.stream_ids.append(stream_id)
 
-            await self.ref().per_workflow(
-                "Store stream",
-            ).Write(context, store_stream)
+            await self.ref().per_workflow("Store stream", ).Write(
+                context, store_stream)
 
             stream = Stream.ref(stream_id)
 
@@ -138,10 +202,9 @@ class SessionServicer(Session.Servicer):
             )
 
             # Store client info on initialize.
-            if (
-                isinstance(message.message.root, mcp.types.JSONRPCRequest)
-                and message.message.root.method == "initialize"
-            ):
+            if (isinstance(message.message.root, mcp.types.JSONRPCRequest)
+                    and message.message.root.method == "initialize"):
+
                 async def store_client_info(state):
                     client_info = message.message.root.params["clientInfo"]
                     if "name" in client_info:
@@ -152,12 +215,11 @@ class SessionServicer(Session.Servicer):
                     state.client_info.version = client_info["version"]
 
                 await self.ref().per_workflow(
-                    "Store client info on initialize",
-                ).Write(context, store_client_info)
+                    "Store client info on initialize", ).Write(
+                        context, store_client_info)
 
-            with self._get_request_streams(
-                request_id,
-            ) as (read_stream, write_stream):
+            with self._get_request_streams(request_id, ) as (read_stream,
+                                                             write_stream):
                 read_stream_send, _ = read_stream
                 _, write_stream_receive = write_stream
 
@@ -179,32 +241,28 @@ class SessionServicer(Session.Servicer):
                     async for write_message in write_stream_receive:
                         logger.debug(
                             f"Sending message ({type(write_message).__name__}): "
-                            f"{write_message}"
-                        )
+                            f"{write_message}")
 
                         event_id = get_event_id(write_message)
 
                         related_request_id = (
                             write_message.metadata.related_request_id
-                            if write_message.metadata is not None else None
-                        )
+                            if write_message.metadata is not None else None)
 
                         # If this is a request, we need to grab the
                         # request ID and map it to something else that
                         # we actually send so that we can reconnect it
                         # here.
-                        if isinstance(write_message.message.root, mcp.types.JSONRPCRequest):
+                        if isinstance(write_message.message.root,
+                                      mcp.types.JSONRPCRequest):
                             write_request_id = write_message.message.root.id
                             write_message.message.root.id = event_id
                             assert related_request_id is not None
                             self._write_request_ids[event_id] = (
-                                write_request_id, related_request_id
-                            )
+                                write_request_id, related_request_id)
 
-                        assert (
-                            related_request_id is None or
-                            type(related_request_id) == str
-                        )
+                        assert (related_request_id is None
+                                or type(related_request_id) == str)
 
                         # Store the _outgoing_ message, i.e., event,
                         # on the stream.
@@ -221,8 +279,9 @@ class SessionServicer(Session.Servicer):
                         )
 
                         if isinstance(
-                            write_message.message.root,
-                            mcp.types.JSONRPCResponse | mcp.types.JSONRPCError,
+                                write_message.message.root,
+                                mcp.types.JSONRPCResponse
+                                | mcp.types.JSONRPCError,
                         ):
                             await read_stream_send.aclose()
                             break
@@ -239,7 +298,8 @@ class SessionServicer(Session.Servicer):
                 # this function and `Run()`.
                 await run_task
 
-                logger.debug(f"Completed ({type(message).__name__}): {message}")
+                logger.debug(
+                    f"Completed ({type(message).__name__}): {message}")
 
                 return HandleMessageResponse()
 
@@ -287,8 +347,7 @@ class SessionServicer(Session.Servicer):
             )
 
             with self._get_request_streams(
-                related_request_id,
-            ) as (read_stream, _):
+                    related_request_id, ) as (read_stream, _):
                 read_stream_send, _ = read_stream
 
                 await read_stream_send.send(message)
@@ -311,9 +370,8 @@ class SessionServicer(Session.Servicer):
 
         request_id = message.message.root.id
 
-        with self._get_request_streams(
-            request_id,
-        ) as (read_stream, write_stream):
+        with self._get_request_streams(request_id, ) as (read_stream,
+                                                         write_stream):
             _, read_stream_receive = read_stream
             write_stream_send, _ = write_stream
 
@@ -345,11 +403,13 @@ class SessionServicer(Session.Servicer):
 
             return RunResponse()
 
-    async def get(
+    async def Get(
         self,
         context: ReaderContext,
         request: GetRequest,
     ) -> GetResponse:
+        print("inside Get")
+        print(self.state.stream_ids)
         return GetResponse(
             stream_ids=self.state.stream_ids,
             client_info=self.state.client_info,

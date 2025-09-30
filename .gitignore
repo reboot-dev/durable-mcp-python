@@ -13,4 +13,9 @@ __pycache__/
 *_pb2_grpc.py
 *_rbt.py
 
+*_pb.ts*
+*_pb_grpc.ts
+*_rbt.ts
+*_react.ts
+
 dist

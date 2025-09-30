@@ -7,10 +7,13 @@ from rbt.mcp.v1.stream_rbt import (
     ReplayRequest,
     ReplayResponse,
     Stream,
+    GetStreamRequest,
+    GetStreamResponse,
 )
 from reboot.aio.auth.authorizers import allow
 from reboot.aio.contexts import ReaderContext, WriterContext
-
+from google.protobuf.json_format import MessageToDict, MessageToJson, ParseDict
+import json
 
 class StreamServicer(Stream.Servicer):
 
@@ -70,3 +73,13 @@ class StreamServicer(Stream.Servicer):
                 return ReplayResponse(events=events[i+1:])
 
         return ReplayResponse()
+
+    async def GetStream(
+        self,
+        context: ReaderContext,
+        request: GetStreamRequest,
+    ) -> GetStreamResponse:
+        json_array = [MessageToDict(message) for message in self.state.messages]
+
+        return GetStreamResponse(json_messages=json.dumps(json_array))
+    

@@ -6,6 +6,39 @@ import "rbt/v1alpha1/options.proto";
 
 ////////////////////////////////////////////////////////////////////////
 
+
+message Sessions {
+   option (rbt.v1alpha1.state) = {
+  };
+}
+
+service SessionsMethods {
+  rpc Create(CreateRequest) returns (CreateResponse) {
+    option (rbt.v1alpha1.method) = {
+      writer: {
+        constructor: {},
+      }
+    };
+  }
+
+  rpc List(ListRequest) returns (ListResponse) {
+    option (rbt.v1alpha1.method).reader = {
+    };
+  }
+}
+
+message ListRequest {}
+
+message ListResponse {
+  repeated string session_ids = 1;
+}
+
+message CreateRequest {}
+
+message CreateResponse {}
+
+////////////////////////////////////////////////////////////////////////
+
 message Session {
   option (rbt.v1alpha1.state) = {
   };
@@ -67,7 +100,9 @@ message RunResponse {}
 
 ////////////////////////////////////////////////////////////////////////
 
-message GetRequest {}
+message GetRequest {
+  string noop = 1;
+}
 
 message GetResponse {
   repeated string stream_ids = 1;

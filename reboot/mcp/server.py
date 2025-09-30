@@ -22,9 +22,10 @@ from mcp.server.streamable_http import (
     StreamableHTTPServerTransport,
 )
 from mcp.shared.message import ServerMessageMetadata
-from rbt.mcp.v1.session_rbt import Session
+from rbt.mcp.v1.session_rbt import Session, Sessions
 from reboot.aio.applications import Application
 from reboot.aio.contexts import EffectValidation, WorkflowContext
+from reboot.aio.external import InitializeContext
 from reboot.aio.external import ExternalContext
 from reboot.aio.types import StateRef
 from reboot.aio.workflows import at_least_once
@@ -33,12 +34,15 @@ from reboot.mcp.event_store import (
     replay,
     qualified_stream_id,
 )
+from reboot.mcp.settings import SORTED_MAP_SESSIONS_INDEX
 from reboot.mcp.servicers.session import (
     SessionServicer,
+    SessionsServicer,
     _servers,
     _context,
 )
 from reboot.mcp.servicers.stream import StreamServicer
+from reboot.mcp.settings import SORTED_MAP_SESSIONS_INDEX
 from reboot.std.collections.v1 import sorted_map
 from rebootdev.aio.headers import CONSENSUS_ID_HEADER, STATE_REF_HEADER
 from rebootdev.memoize.v1.memoize_rbt import Memoize
@@ -77,10 +81,8 @@ class DurableSession:
             event_alias += f" #{self._context.task.iteration}"
 
         if event_alias in self._event_aliases:
-            raise TypeError(
-                f"Looks like you're calling `{function_name}()` "
-                "more than once with the same `why`"
-            )
+            raise TypeError(f"Looks like you're calling `{function_name}()` "
+                            "more than once with the same `why`")
 
         self._event_aliases.add(event_alias)
 
@@ -112,12 +114,8 @@ class DurableSession:
                     method="notifications/resources/list_changed",
                     params=mcp.types.NotificationParams(
                         _meta=mcp.types.NotificationParams.Meta(
-                            rebootEventId=str(event_id),
-                        ),
-                    ),
-                ),
-            ),
-        )
+                            rebootEventId=str(event_id), ), ),
+                ), ), )
 
     async def send_tool_list_changed(self, why: str) -> None:
         """
@@ -138,12 +136,8 @@ class DurableSession:
                     method="notifications/tools/list_changed",
                     params=mcp.types.NotificationParams(
                         _meta=mcp.types.NotificationParams.Meta(
-                            rebootEventId=str(event_id),
-                        ),
-                    ),
-                ),
-            ),
-        )
+                            rebootEventId=str(event_id), ), ),
+                ), ), )
 
     async def send_prompt_list_changed(self, why: str) -> None:
         """
@@ -164,12 +158,8 @@ class DurableSession:
                     method="notifications/prompts/list_changed",
                     params=mcp.types.NotificationParams(
                         _meta=mcp.types.NotificationParams.Meta(
-                            rebootEventId=str(event_id),
-                        ),
-                    ),
-                ),
-            ),
-        )
+                            rebootEventId=str(event_id), ), ),
+                ), ), )
 
 
 class DurableContextProtocol(Protocol):
@@ -231,7 +221,7 @@ class DurableContextProtocol(Protocol):
         message: str,
         schema: type[ElicitSchemaModelT],
     ) -> ElicitationResult:
-         """
+        """
          Elicit information from the client/user.
 
         This method can be used to interactively ask for additional
@@ -259,7 +249,7 @@ class DurableContextProtocol(Protocol):
             declined, or cancelled.  The result.data will only be
             populated if action is "accept" and validation succeeded.
          """
-         ...
+        ...
 
 
 class DurableContext(WorkflowContext, DurableContextProtocol):
@@ -332,7 +322,7 @@ class DurableMCP:
         return self._path
 
     def servicers(self):
-        return [SessionServicer, StreamServicer] + sorted_map.servicers()
+        return [SessionServicer, SessionsServicer, StreamServicer] + sorted_map.servicers()
 
     def resource(
         self,
@@ -396,8 +386,7 @@ class DurableMCP:
                     title=title,
                     description=description,
                     mime_type=mime_type,
-                )
-            )
+                ))
             return fn
 
         return decorator
@@ -411,7 +400,6 @@ class DurableMCP:
         # from `resource`? We also have to override the `resource()`
         # decorator anyway to get templates.
         raise NotImplementedError("Use `resource()` decorator instead")
-
 
     def prompt(
         self,
@@ -457,8 +445,7 @@ class DurableMCP:
         if callable(name):
             raise TypeError(
                 "The @prompt decorator was used incorrectly. "
-                "Did you forget to call it? Use @prompt() instead of @prompt"
-            )
+                "Did you forget to call it? Use @prompt() instead of @prompt")
 
         def decorator(func: mcp.types.AnyFunction) -> mcp.types.AnyFunction:
             self._prompts.append(
@@ -467,8 +454,7 @@ class DurableMCP:
                     name=name,
                     title=title,
                     description=description,
-                ),
-            )
+                ), )
             return func
 
         return decorator
@@ -557,15 +543,18 @@ class DurableMCP:
                 description=description,
                 annotations=annotations,
                 structured_output=structured_output,
-            )
-        )
+            ))
 
     def application(self) -> Application:
         """
         Returns a Reboot `Application` for running the MCP tools,
         resources, prompts, etc that were defined.
         """
-        application = Application(servicers=self.servicers())
+
+        async def initialize(context: InitializeContext):
+            await Sessions.Create(context, SORTED_MAP_SESSIONS_INDEX)
+
+        application = Application(servicers=self.servicers(), initialize=initialize)
 
         application.http.mount(
             self._path,
@@ -624,17 +613,15 @@ def _streamable_http_app(
 
     _servers[path] = mcp._mcp_server
 
-    return Starlette(
-        routes=[
-            Route(
-                "/{path:path}",
-                endpoint=StreamableHTTPASGIApp(
-                    path,
-                    external_context_from_request,
-                ),
+    return Starlette(routes=[
+        Route(
+            "/{path:path}",
+            endpoint=StreamableHTTPASGIApp(
+                path,
+                external_context_from_request,
             ),
-        ],
-    )
+        ),
+    ], )
 
 
 def _wrap_tool(fn: mcp.types.AnyFunction) -> mcp.types.AnyFunction:
@@ -654,16 +641,12 @@ def _wrap_tool(fn: mcp.types.AnyFunction) -> mcp.types.AnyFunction:
 
     for parameter_name, parameter in signature.parameters.items():
         annotation = parameter.annotation
-        if (
-            isinstance(annotation, type) and
-            issubclass(annotation, fastmcp.Context)
-        ):
+        if (isinstance(annotation, type)
+                and issubclass(annotation, fastmcp.Context)):
             raise TypeError(
                 "`DurableMCP` only injects `DurableContext` not `Context`")
-        if (
-            isinstance(annotation, type) and
-            issubclass(annotation, DurableContext)
-        ):
+        if (isinstance(annotation, type)
+                and issubclass(annotation, DurableContext)):
             context_parameter_names.append(parameter_name)
         else:
             wrapper_parameters.append(parameter)
@@ -696,10 +679,8 @@ def _wrap_tool(fn: mcp.types.AnyFunction) -> mcp.types.AnyFunction:
             total: float | None = None,
             message: str | None = None,
         ) -> None:
-            progress_token = (
-                ctx.request_context.meta.progressToken
-                if ctx.request_context.meta else None
-            )
+            progress_token = (ctx.request_context.meta.progressToken
+                              if ctx.request_context.meta else None)
 
             if progress_token is None:
                 return
@@ -711,8 +692,7 @@ def _wrap_tool(fn: mcp.types.AnyFunction) -> mcp.types.AnyFunction:
 
             event_alias = (
                 f"report_progress(progress={progress}, total={total}, "
-                f"message={message})"
-            )
+                f"message={message})")
 
             assert context is not None
 
@@ -722,8 +702,7 @@ def _wrap_tool(fn: mcp.types.AnyFunction) -> mcp.types.AnyFunction:
             if event_alias in self._event_aliases:
                 raise TypeError(
                     f"Looks like you're calling `report_progress()` "
-                    "more than once with the same arguments"
-                )
+                    "more than once with the same arguments")
 
             self._event_aliases.add(event_alias)
 
@@ -748,15 +727,14 @@ def _wrap_tool(fn: mcp.types.AnyFunction) -> mcp.types.AnyFunction:
                             total=total,
                             message=message,
                             _meta=mcp.types.NotificationParams.Meta(
-                                rebootEventId=str(event_id),
-                            ),
+                                rebootEventId=str(event_id), ),
                         ),
-                    ),
-                ),
+                    ), ),
                 related_request_id=ctx.request_id,
             )
 
-        context.report_progress = MethodType(report_progress, context)  # type: ignore[method-assign]
+        context.report_progress = MethodType(
+            report_progress, context)  # type: ignore[method-assign]
 
         async def log(
             self,
@@ -775,10 +753,8 @@ def _wrap_tool(fn: mcp.types.AnyFunction) -> mcp.types.AnyFunction:
                 event_alias += f" #{context.task.iteration}"
 
             if event_alias in self._event_aliases:
-                raise TypeError(
-                    "Looks like you're trying to `log()` "
-                    "more than once with the same arguments"
-                )
+                raise TypeError("Looks like you're trying to `log()` "
+                                "more than once with the same arguments")
 
             self._event_aliases.add(event_alias)
 
@@ -802,11 +778,9 @@ def _wrap_tool(fn: mcp.types.AnyFunction) -> mcp.types.AnyFunction:
                             data=message,
                             logger=logger_name,
                             _meta=mcp.types.NotificationParams.Meta(
-                                rebootEventId=str(event_id),
-                            ),
+                                rebootEventId=str(event_id), ),
                         ),
-                    )
-                ),
+                    )),
                 related_request_id=ctx.request_id,
             )
 
@@ -815,7 +789,8 @@ def _wrap_tool(fn: mcp.types.AnyFunction) -> mcp.types.AnyFunction:
         async def debug(self, message: str) -> None:
             await self.log("debug", message)
 
-        context.debug = MethodType(debug, context)  # type: ignore[method-assign]
+        context.debug = MethodType(debug,
+                                   context)  # type: ignore[method-assign]
 
         async def info(self, message: str) -> None:
             await self.log("info", message)
@@ -825,12 +800,14 @@ def _wrap_tool(fn: mcp.types.AnyFunction) -> mcp.types.AnyFunction:
         async def warning(self, message: str) -> None:
             await self.log("warning", message)
 
-        context.warning = MethodType(warning, context)  # type: ignore[method-assign]
+        context.warning = MethodType(warning,
+                                     context)  # type: ignore[method-assign]
 
         async def error(self, message: str) -> None:
             await self.log("error", message)
 
-        context.error = MethodType(error, context)  # type: ignore[method-assign]
+        context.error = MethodType(error,
+                                   context)  # type: ignore[method-assign]
 
         async def elicit(
             self,
@@ -838,8 +815,7 @@ def _wrap_tool(fn: mcp.types.AnyFunction) -> mcp.types.AnyFunction:
             schema: type[ElicitSchemaModelT],
         ) -> ElicitationResult:
             event_alias = (
-                f"elicit(message='{message}', schema={type(schema).__name__})"
-            )
+                f"elicit(message='{message}', schema={type(schema).__name__})")
 
             assert context is not None
 
@@ -847,10 +823,8 @@ def _wrap_tool(fn: mcp.types.AnyFunction) -> mcp.types.AnyFunction:
                 event_alias += f" #{context.task.iteration}"
 
             if event_alias in self._event_aliases:
-                raise TypeError(
-                    "Looks like you're trying to `elicit()` "
-                    "more than once with the same arguments"
-                )
+                raise TypeError("Looks like you're trying to `elicit()` "
+                                "more than once with the same arguments")
 
             self._event_aliases.add(event_alias)
 
@@ -899,15 +873,12 @@ def _wrap_tool(fn: mcp.types.AnyFunction) -> mcp.types.AnyFunction:
                                 message=message,
                                 requestedSchema=json_schema,
                                 _meta=mcp.types.RequestParams.Meta(
-                                    rebootEventId=str(event_id),
-                                ),
+                                    rebootEventId=str(event_id), ),
                             ),
-                        )
-                    ),
+                        )),
                     mcp.types.ElicitResult,
                     metadata=ServerMessageMetadata(
-                        related_request_id=ctx.request_id,
-                    ),
+                        related_request_id=ctx.request_id, ),
                 )
 
             result = await at_least_once(
@@ -928,10 +899,10 @@ def _wrap_tool(fn: mcp.types.AnyFunction) -> mcp.types.AnyFunction:
             else:
                 # This should never happen, but handle it just in case.
                 raise ValueError(
-                    f"Unexpected elicitation action: {result.action}"
-                )
+                    f"Unexpected elicitation action: {result.action}")
 
-        context.elicit = MethodType(elicit, context)  # type: ignore[method-assign]
+        context.elicit = MethodType(elicit,
+                                    context)  # type: ignore[method-assign]
 
         for context_parameter_name in context_parameter_names:
             kwargs[context_parameter_name] = context
@@ -970,8 +941,7 @@ def _wrap_tool(fn: mcp.types.AnyFunction) -> mcp.types.AnyFunction:
         logger.info(
             f"Re-running tool '{fn.__name__}' "
             f"to validate effects. See {DOCS_BASE_URL}/develop/side_effects "
-            "for more information."
-        )
+            "for more information.")
 
         # Restore the context to the checkpoint we took above so we
         # can re-execute `callable` as though it is being retried from
@@ -1034,14 +1004,14 @@ class StreamableHTTPASGIApp:
                     # Too simplify we always perform a streaming
                     # request even if the response is not streaming.
                     async with client.stream(
-                        request.method,
-                        str(request.url),
-                        headers=headers,
-                        content=await request.body(),
-                        # Don't worry about timing out, this might be
-                        # a long-lived `GET` for server sent events
-                        # streaming.
-                        timeout=None,
+                            request.method,
+                            str(request.url),
+                            headers=headers,
+                            content=await request.body(),
+                            # Don't worry about timing out, this might be
+                            # a long-lived `GET` for server sent events
+                            # streaming.
+                            timeout=None,
                     ) as upstream:
                         # Create a generator to yield chunks from the
                         # upstream response.
@@ -1143,16 +1113,16 @@ class StreamableHTTPASGIApp:
                         )
 
                         if not isinstance(message, Exception) and isinstance(
-                            message.message.root,
-                            mcp.types.JSONRPCRequest,
+                                message.message.root,
+                                mcp.types.JSONRPCRequest,
                         ):
                             request_id = message.message.root.id
 
                             async def writer():
                                 async for message, _ in replay(
-                                    context,
-                                    session_id=session.state_id,
-                                    request_id=request_id,
+                                        context,
+                                        session_id=session.state_id,
+                                        request_id=request_id,
                                 ):
                                     await write_stream.send(message)
 
