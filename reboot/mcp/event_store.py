@@ -75,6 +75,10 @@ class DurableEventStore(EventStore):
         qualified_last_event_id: EventId,
         send_callback: EventCallback,
     ) -> StreamId | None:
+        if qualified_last_event_id == "VS_CODE_INITIAL_GET_LAST_EVENT_ID":
+            import asyncio
+            await asyncio.Event().wait()
+
         request_id, last_event_id = qualified_last_event_id.split("/")
 
         async for message, event_id in replay(

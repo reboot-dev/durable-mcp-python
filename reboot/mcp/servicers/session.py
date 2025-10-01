@@ -12,6 +12,8 @@ from log.log import get_logger
 from mcp.server.lowlevel.server import Server
 from mcp.shared.message import SessionMessage
 from rbt.mcp.v1.session_rbt import (
+    GetRequest,
+    GetResponse,
     HandleMessageRequest,
     HandleMessageResponse,
     RunRequest,
@@ -20,7 +22,7 @@ from rbt.mcp.v1.session_rbt import (
 )
 from rbt.mcp.v1.stream_rbt import Stream
 from reboot.aio.auth.authorizers import allow
-from reboot.aio.contexts import WorkflowContext, WriterContext
+from reboot.aio.contexts import ReaderContext, WorkflowContext, WriterContext
 from reboot.aio.workflows import at_least_once
 from reboot.mcp.event_store import get_event_id, qualified_stream_id
 from reboot.protobuf import from_model
@@ -117,7 +119,9 @@ class SessionServicer(Session.Servicer):
                 """Inline writer that adds this stream to `Session` state."""
                 state.stream_ids.append(stream_id)
 
-            await self.ref().Write(context, store_stream)
+            await self.ref().per_workflow(
+                "Store stream",
+            ).Write(context, store_stream)
 
             stream = Stream.ref(stream_id)
 
@@ -132,6 +136,24 @@ class SessionServicer(Session.Servicer):
                     exclude_none=True,
                 ),
             )
+
+            # Store client info on initialize.
+            if (
+                isinstance(message.message.root, mcp.types.JSONRPCRequest)
+                and message.message.root.method == "initialize"
+            ):
+                async def store_client_info(state):
+                    client_info = message.message.root.params["clientInfo"]
+                    if "name" in client_info:
+                        state.client_info.name = client_info["name"]
+                    if "title" in client_info:
+                        state.client_info.title = client_info["title"]
+                    assert "version" in client_info
+                    state.client_info.version = client_info["version"]
+
+                await self.ref().per_workflow(
+                    "Store client info on initialize",
+                ).Write(context, store_client_info)
 
             with self._get_request_streams(
                 request_id,
@@ -322,3 +344,13 @@ class SessionServicer(Session.Servicer):
             await at_least_once("Server run", context, server_run)
 
             return RunResponse()
+
+    async def get(
+        self,
+        context: ReaderContext,
+        request: GetRequest,
+    ) -> GetResponse:
+        return GetResponse(
+            stream_ids=self.state.stream_ids,
+            client_info=self.state.client_info,
+        )

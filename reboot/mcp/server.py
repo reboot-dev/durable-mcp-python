@@ -44,6 +44,7 @@ from rebootdev.aio.headers import CONSENSUS_ID_HEADER, STATE_REF_HEADER
 from rebootdev.memoize.v1.memoize_rbt import Memoize
 from rebootdev.settings import DOCS_BASE_URL
 from starlette.applications import Starlette
+from starlette.datastructures import MutableHeaders
 from starlette.requests import Request
 from starlette.responses import Response, StreamingResponse
 from starlette.routing import Route
@@ -1069,14 +1070,6 @@ class StreamableHTTPASGIApp:
 
         mcp_session_id = request.headers.get(MCP_SESSION_ID_HEADER)
 
-        if (
-            mcp_session_id is not None and
-            mcp_session_id in self._http_transports
-        ):
-            transport = self._http_transports[mcp_session_id]
-            await transport.handle_request(scope, receive, send)
-            return
-
         # If this is a new session, i.e., `mcp_session_id is None`, we
         # need to use the session ID we already generated so all
         # requests for it will get routed to this consensus.
@@ -1086,14 +1079,35 @@ class StreamableHTTPASGIApp:
             session_id = StateRef.from_maybe_readable(session_ref).id
             mcp_session_id = session_id
 
+        session = Session.ref(mcp_session_id)
+
+        # If this is a GET, wait until "initialize" has completed and
+        # we know the client so we can special case VS Code.
+        if request.method == "GET":
+            if "last-event-id" not in request.headers:
+                async for response in session.reactively().get(context):
+                    if response.client_info.HasField("name"):
+                        if response.client_info.name == "Visual Studio Code":
+                            # Modify headers to always include a
+                            # 'last-event-id' so that we'll always
+                            # replay from the aggregate stream.
+                            headers = MutableHeaders(scope=scope)
+                            headers["last-event-id"] = "VS_CODE_INITIAL_GET_LAST_EVENT_ID"
+                            scope["headers"] = headers.raw
+                            request = Request(scope, receive)
+                        break
+
+        if mcp_session_id in self._http_transports:
+            transport = self._http_transports[mcp_session_id]
+            await transport.handle_request(scope, receive, send)
+            return
+
         http_transport = StreamableHTTPServerTransport(
             mcp_session_id=mcp_session_id,
             is_json_response_enabled=False,
             event_store=DurableEventStore(context, mcp_session_id),
             security_settings=None,
         )
-
-        session = Session.ref(mcp_session_id)
 
         self._http_transports[mcp_session_id] = http_transport
 
@@ -1108,6 +1122,7 @@ class StreamableHTTPASGIApp:
                 writer_tasks: list[asyncio.Task] = []
 
                 async def reader():
+
                     async for message in read_stream:
                         # TODO: we can't pickle `request_context`
                         # which is a `starlette.requests.Request`,

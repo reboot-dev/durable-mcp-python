@@ -11,6 +11,8 @@ message Session {
   };
 
   repeated string stream_ids = 1;
+
+  Implementation client_info = 2;
 }
 
 ////////////////////////////////////////////////////////////////////////
@@ -25,6 +27,24 @@ service SessionMethods {
     option (rbt.v1alpha1.method).workflow = {
     };
   }
+
+  // Returns public representation of this session.
+  rpc Get(GetRequest) returns (GetResponse) {
+    option (rbt.v1alpha1.method).reader = {
+    };
+  }
+}
+
+////////////////////////////////////////////////////////////////////////
+
+message Implementation {
+  // Technically `name` is _supposed_ to be
+  // required, but it does not look like that is enforced
+  // by the Pydantic models, so we're making it optional, see:
+  // github.com/modelcontextprotocol/python-sdk/blob/main/src/mcp/types.py#L231
+  optional string name = 1;
+  optional string title = 2;
+  string version = 3;
 }
 
 ////////////////////////////////////////////////////////////////////////
@@ -44,5 +64,14 @@ message RunRequest {
 }
 
 message RunResponse {}
+
+////////////////////////////////////////////////////////////////////////
+
+message GetRequest {}
+
+message GetResponse {
+  repeated string stream_ids = 1;
+  Implementation client_info = 2;
+}
 
 ////////////////////////////////////////////////////////////////////////
