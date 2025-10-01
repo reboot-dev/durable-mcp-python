@@ -23,6 +23,7 @@ requires-python = ">=3.12.11"
 dependencies = [
     "reboot==0.38.2",
     "mcp==1.13.1",
+    "uuid7-standard>=1.1.0",  # Latest as of 2025/09/30.
 ]
 
 [project.optional-dependencies]

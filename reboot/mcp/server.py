@@ -51,6 +51,7 @@ from starlette.types import Receive, Scope, Send
 from types import MethodType
 from typing import Any, Callable, Literal, Protocol, TypeAlias, cast
 from uuid import uuid4, uuid5
+from uuid7 import create as uuid7
 
 logger = get_logger(__name__)
 
@@ -1016,7 +1017,7 @@ class StreamableHTTPASGIApp:
 
             # If this is a new session, i.e., we don't have an ID,
             # then generate one which we'll use as the session ID.
-            mcp_session_id = mcp_session_id or uuid4().hex
+            mcp_session_id = mcp_session_id or uuid7().hex
 
             headers = dict(request.headers)
             headers[STATE_REF_HEADER] = f"rbt.mcp.v1.Session:{mcp_session_id}"
