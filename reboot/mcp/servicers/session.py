@@ -113,6 +113,12 @@ class SessionServicer(Session.Servicer):
                 request_id=request_id,
             )
 
+            async def store_stream(state):
+                """Inline writer that adds this stream to `Session` state."""
+                state.stream_ids.append(stream_id)
+
+            await self.ref().Write(context, store_stream)
+
             stream = Stream.ref(stream_id)
 
             # Store the initial request on the stream for

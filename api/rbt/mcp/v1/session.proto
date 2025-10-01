@@ -9,6 +9,8 @@ import "rbt/v1alpha1/options.proto";
 message Session {
   option (rbt.v1alpha1.state) = {
   };
+
+  repeated string stream_ids = 1;
 }
 
 ////////////////////////////////////////////////////////////////////////
