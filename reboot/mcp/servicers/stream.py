@@ -1,5 +1,6 @@
 from google.protobuf.empty_pb2 import Empty
 from rbt.mcp.v1.stream_rbt import (
+    CreateRequest,
     Event,
     PutRequest,
     PutResponse,
@@ -19,8 +20,10 @@ class StreamServicer(Stream.Servicer):
     async def Create(
         self,
         context: WriterContext,
-        request: Empty,
+        request: CreateRequest,
     ) -> Empty:
+        if request.HasField("request"):
+            self.state.request.CopyFrom(request.request)
         return Empty()
 
     async def Put(

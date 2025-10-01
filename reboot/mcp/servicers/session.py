@@ -8,8 +8,6 @@ from anyio.streams.memory import (
 )
 from contextlib import contextmanager
 from dataclasses import dataclass
-from google.protobuf.json_format import ParseDict
-from google.protobuf.struct_pb2 import Value
 from log.log import get_logger
 from mcp.server.lowlevel.server import Server
 from mcp.shared.message import SessionMessage
@@ -25,6 +23,7 @@ from reboot.aio.auth.authorizers import allow
 from reboot.aio.contexts import WorkflowContext, WriterContext
 from reboot.aio.workflows import at_least_once
 from reboot.mcp.event_store import get_event_id, qualified_stream_id
+from reboot.protobuf import from_model
 
 logger = get_logger(__name__)
 
@@ -116,6 +115,17 @@ class SessionServicer(Session.Servicer):
 
             stream = Stream.ref(stream_id)
 
+            # Create the stream and store the initial request.
+            await stream.create(
+                context,
+                request=from_model(
+                    message.message,
+                    by_alias=True,
+                    mode="json",
+                    exclude_none=True,
+                ),
+            )
+
             with self._get_request_streams(
                 request_id,
             ) as (read_stream, write_stream):
@@ -170,15 +180,11 @@ class SessionServicer(Session.Servicer):
                         await stream.per_workflow(event_id).Put(
                             context,
                             event_id=event_id,
-                            # TODO: replace `ParseDict` with
-                            # `from_model` after upgrading Reboot.
-                            message=ParseDict(
-                                write_message.message.model_dump(
-                                    by_alias=True,
-                                    mode="json",
-                                    exclude_none=True,
-                                ),
-                                Value(),
+                            message=from_model(
+                                write_message.message,
+                                by_alias=True,
+                                mode="json",
+                                exclude_none=True,
                             ),
                             related_request_id=related_request_id,
                         )

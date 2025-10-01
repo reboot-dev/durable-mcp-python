@@ -12,13 +12,14 @@ message Stream {
   option (rbt.v1alpha1.state) = {
   };
 
-  repeated Event events = 1;
+  google.protobuf.Value request = 1;
+  repeated Event events = 2;
 }
 
 ////////////////////////////////////////////////////////////////////////
 
 service StreamMethods {
-  rpc Create(google.protobuf.Empty) returns (google.protobuf.Empty) {
+  rpc Create(CreateRequest) returns (google.protobuf.Empty) {
     option (rbt.v1alpha1.method).writer = {
     };
   }
@@ -44,6 +45,12 @@ message Event {
   // `related_request_id` appears to be a `str`, even though
   // request IDs appear to be `int`. *sigh*
   optional string related_request_id = 3;
+}
+
+////////////////////////////////////////////////////////////////////////
+
+message CreateRequest {
+  optional google.protobuf.Value request = 1;
 }
 
 ////////////////////////////////////////////////////////////////////////
