@@ -51,7 +51,7 @@ from starlette.types import Receive, Scope, Send
 from types import MethodType
 from typing import Any, Callable, Literal, Protocol, TypeAlias, cast
 from uuid import uuid4, uuid5
-from uuid7 import create as uuid7
+from uuid7 import create as uuid7  # type: ignore[import-untyped]
 
 logger = get_logger(__name__)
 
