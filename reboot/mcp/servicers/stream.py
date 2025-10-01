@@ -1,7 +1,7 @@
 from google.protobuf.empty_pb2 import Empty
 from rbt.mcp.v1.stream_rbt import (
-    CreateRequest,
     Event,
+    Message,
     PutRequest,
     PutResponse,
     ReplayRequest,
@@ -20,10 +20,8 @@ class StreamServicer(Stream.Servicer):
     async def Create(
         self,
         context: WriterContext,
-        request: CreateRequest,
+        request: Empty,
     ) -> Empty:
-        if request.HasField("request"):
-            self.state.request.CopyFrom(request.request)
         return Empty()
 
     async def Put(
@@ -31,10 +29,13 @@ class StreamServicer(Stream.Servicer):
         context: WriterContext,
         request: PutRequest,
     ) -> PutResponse:
-        self.state.events.append(
-            Event(
-                id=request.event_id,
+        self.state.messages.append(
+            Message(
                 message=request.message,
+                event_id=(
+                    request.event_id
+                    if request.HasField("event_id") else None
+                ),
                 related_request_id=(
                     request.related_request_id
                     if request.HasField("related_request_id") else None
@@ -48,11 +49,24 @@ class StreamServicer(Stream.Servicer):
         context: ReaderContext,
         request: ReplayRequest,
     ) -> ReplayResponse:
-        if not request.HasField("last_event_id"):
-            return ReplayResponse(events=self.state.events)
+        # TODO: don't construct _all_ the events every time!
+        events = [
+            Event(
+                id=message.event_id,
+                message=message.message,
+                related_request_id=(
+                    message.related_request_id
+                    if message.HasField("related_request_id") else None
+                ),
+            )
+            for message in self.state.messages if message.HasField("event_id")
+        ]
 
-        for i, event in enumerate(self.state.events):
+        if not request.HasField("last_event_id"):
+            return ReplayResponse(events=events)
+
+        for i, event in enumerate(events):
             if event.id == request.last_event_id:
-                return ReplayResponse(events=self.state.events[i+1:])
+                return ReplayResponse(events=events[i+1:])
 
         return ReplayResponse()

@@ -12,14 +12,19 @@ message Stream {
   option (rbt.v1alpha1.state) = {
   };
 
+  // Initial request for this stream.
   google.protobuf.Value request = 1;
-  repeated Event events = 2;
+
+  // Incoming and outgoing messages captured in order.
+  // Outgoing messages are all considered "events"
+  // and thus have an `event_id`.
+  repeated Message messages = 2;
 }
 
 ////////////////////////////////////////////////////////////////////////
 
 service StreamMethods {
-  rpc Create(CreateRequest) returns (google.protobuf.Empty) {
+  rpc Create(google.protobuf.Empty) returns (google.protobuf.Empty) {
     option (rbt.v1alpha1.method).writer = {
     };
   }
@@ -29,6 +34,8 @@ service StreamMethods {
     };
   }
 
+  // Replay all _outgoing_ messages, which are also considered
+  // events and have an `event_id`.
   rpc Replay(ReplayRequest) returns (ReplayResponse) {
     option (rbt.v1alpha1.method).reader = {
     };
@@ -37,9 +44,12 @@ service StreamMethods {
 
 ////////////////////////////////////////////////////////////////////////
 
-message Event {
-  string id = 1;
-  google.protobuf.Value message = 2;
+message Message {
+  google.protobuf.Value message = 1;
+
+  // Implies an outgoing message!
+  optional string event_id = 2;
+
   // This is of type `RequestId` which technically in Python
   // can be either a `str` or an `int` but in practice the
   // `related_request_id` appears to be a `str`, even though
@@ -47,18 +57,19 @@ message Event {
   optional string related_request_id = 3;
 }
 
-////////////////////////////////////////////////////////////////////////
-
-message CreateRequest {
-  optional google.protobuf.Value request = 1;
+message Event {
+  string id = 1;
+  google.protobuf.Value message = 2;
+  // See comment in `Message` above re: using `string` here.
+  optional string related_request_id = 3;
 }
 
 ////////////////////////////////////////////////////////////////////////
 
 message PutRequest {
-  string event_id = 1;
-  google.protobuf.Value message = 2;
-  // See comment in `Event` above re: using `string` here.
+  google.protobuf.Value message = 1;
+  optional string event_id = 2;
+  // See comment in `Message` above re: using `string` here.
   optional string related_request_id = 3;
 }
 

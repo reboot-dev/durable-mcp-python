@@ -115,10 +115,11 @@ class SessionServicer(Session.Servicer):
 
             stream = Stream.ref(stream_id)
 
-            # Create the stream and store the initial request.
-            await stream.create(
+            # Put the initial request on the stream for
+            # auditing/inspecting/debugging.
+            await stream.put(
                 context,
-                request=from_model(
+                message=from_model(
                     message.message,
                     by_alias=True,
                     mode="json",
@@ -177,15 +178,15 @@ class SessionServicer(Session.Servicer):
                             type(related_request_id) == str
                         )
 
-                        await stream.per_workflow(event_id).Put(
+                        await stream.per_workflow(event_id).put(
                             context,
-                            event_id=event_id,
                             message=from_model(
                                 write_message.message,
                                 by_alias=True,
                                 mode="json",
                                 exclude_none=True,
                             ),
+                            event_id=event_id,
                             related_request_id=related_request_id,
                         )
 
@@ -228,9 +229,30 @@ class SessionServicer(Session.Servicer):
             # strings so we ensure that here.
             event_id = str(message.message.root.id)
 
+            # Need to put the request ID that the MCP SDK used back on
+            # the message so it'll be handled/routed correctly.
             request_id, related_request_id = self._write_request_ids[event_id]
 
             message.message.root.id = request_id
+
+            stream_id = qualified_stream_id(
+                session_id=context.state_id,
+                request_id=related_request_id,
+            )
+
+            # We also store the response for
+            # auditing/inspecting/debugging.
+            await Stream.ref(stream_id).per_workflow(
+                f"Store response for request with event ID '{event_id}'",
+            ).put(
+                context,
+                message=from_model(
+                    message.message,
+                    by_alias=True,
+                    mode="json",
+                    exclude_none=True,
+                ),
+            )
 
             with self._get_request_streams(
                 related_request_id,
