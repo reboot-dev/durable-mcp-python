@@ -12,13 +12,10 @@ message Stream {
   option (rbt.v1alpha1.state) = {
   };
 
-  // Initial request for this stream.
-  google.protobuf.Value request = 1;
-
   // Incoming and outgoing messages captured in order.
   // Outgoing messages are all considered "events"
   // and thus have an `event_id`.
-  repeated Message messages = 2;
+  repeated Message messages = 1;
 }
 
 ////////////////////////////////////////////////////////////////////////

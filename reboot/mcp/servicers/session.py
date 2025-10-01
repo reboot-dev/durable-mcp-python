@@ -115,9 +115,9 @@ class SessionServicer(Session.Servicer):
 
             stream = Stream.ref(stream_id)
 
-            # Put the initial request on the stream for
+            # Store the initial request on the stream for
             # auditing/inspecting/debugging.
-            await stream.put(
+            await stream.per_workflow("Store initial request").put(
                 context,
                 message=from_model(
                     message.message,
@@ -178,6 +178,8 @@ class SessionServicer(Session.Servicer):
                             type(related_request_id) == str
                         )
 
+                        # Store the _outgoing_ message, i.e., event,
+                        # on the stream.
                         await stream.per_workflow(event_id).put(
                             context,
                             message=from_model(
@@ -240,9 +242,11 @@ class SessionServicer(Session.Servicer):
                 request_id=related_request_id,
             )
 
+            stream = Stream.ref(stream_id)
+
             # We also store the response for
             # auditing/inspecting/debugging.
-            await Stream.ref(stream_id).per_workflow(
+            await stream.per_workflow(
                 f"Store response for request with event ID '{event_id}'",
             ).put(
                 context,
