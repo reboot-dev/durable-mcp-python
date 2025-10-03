@@ -10,9 +10,11 @@ message Session {
   option (rbt.v1alpha1.state) = {
   };
 
-  repeated string stream_ids = 1;
+  // Client info we initialized with, optional to distinguish when
+  // initialization has occured.
+  optional Implementation client_info = 1;
 
-  Implementation client_info = 2;
+  repeated string stream_ids = 2;
 }
 
 ////////////////////////////////////////////////////////////////////////
@@ -70,8 +72,8 @@ message RunResponse {}
 message GetRequest {}
 
 message GetResponse {
-  repeated string stream_ids = 1;
-  Implementation client_info = 2;
+  optional Implementation client_info = 1;
+  repeated string stream_ids = 2;
 }
 
 ////////////////////////////////////////////////////////////////////////

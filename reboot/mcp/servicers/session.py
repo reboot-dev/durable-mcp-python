@@ -125,6 +125,13 @@ class SessionServicer(Session.Servicer):
 
             stream = Stream.ref(stream_id)
 
+            vscode_stream_id = qualified_stream_id(
+                session_id=context.state_id,
+                request_id="VSCODE_GET",
+            )
+
+            vscode_stream = Stream.ref(vscode_stream_id)
+
             # Store the initial request on the stream for
             # auditing/inspecting/debugging.
             await stream.per_workflow("Store initial request").put(
@@ -143,6 +150,7 @@ class SessionServicer(Session.Servicer):
                 and message.message.root.method == "initialize"
             ):
                 async def store_client_info(state):
+                    assert not state.HasField("client_info")
                     client_info = message.message.root.params["clientInfo"]
                     if "name" in client_info:
                         state.client_info.name = client_info["name"]
@@ -219,6 +227,30 @@ class SessionServicer(Session.Servicer):
                             event_id=event_id,
                             related_request_id=related_request_id,
                         )
+
+                        async def is_visual_studio_code():
+                            response = await self.ref().per_workflow(
+                                "Check if client is Visual Studio Code",
+                            ).get(context)
+                            assert response.HasField("client_info")
+                            if response.HasField("client_info"):
+                                return response.client_info.name == "Visual Studio Code"
+                            return False
+
+                        if await is_visual_studio_code():
+                            # For Visual Studio Code, also store the
+                            # _outgoing_ message, i.e., event, on the
+                            # aggregated stream.
+                            await vscode_stream.per_workflow(event_id).put(
+                                context,
+                                message=from_model(
+                                    write_message.message,
+                                    by_alias=True,
+                                    mode="json",
+                                    exclude_none=True,
+                                ),
+                                event_id=event_id,
+                            )
 
                         if isinstance(
                             write_message.message.root,
@@ -352,5 +384,8 @@ class SessionServicer(Session.Servicer):
     ) -> GetResponse:
         return GetResponse(
             stream_ids=self.state.stream_ids,
-            client_info=self.state.client_info,
+            client_info=(
+                self.state.client_info
+                if self.state.HasField("client_info") else None
+            ),
         )

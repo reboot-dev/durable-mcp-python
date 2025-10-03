@@ -23,6 +23,7 @@ from mcp.server.streamable_http import (
 )
 from mcp.shared.message import ServerMessageMetadata
 from rbt.mcp.v1.session_rbt import Session
+from rbt.v1alpha1.errors_pb2 import StateNotConstructed
 from reboot.aio.applications import Application
 from reboot.aio.contexts import EffectValidation, WorkflowContext
 from reboot.aio.external import ExternalContext
@@ -41,6 +42,7 @@ from reboot.mcp.servicers.session import (
 from reboot.mcp.servicers.stream import StreamServicer
 from reboot.std.collections.v1 import sorted_map
 from rebootdev.aio.headers import CONSENSUS_ID_HEADER, STATE_REF_HEADER
+from rebootdev.aio.backoff import Backoff
 from rebootdev.memoize.v1.memoize_rbt import Memoize
 from rebootdev.settings import DOCS_BASE_URL
 from starlette.applications import Starlette
@@ -1081,25 +1083,99 @@ class StreamableHTTPASGIApp:
 
         session = Session.ref(mcp_session_id)
 
-        # If this is a GET, wait until "initialize" has completed and
-        # we know the client so we can special case VS Code.
+        _is_vscode: bool | None = None
+
+        async def is_vscode():
+            """Returns true if this session client is Visual Studio Code."""
+            nonlocal _is_vscode
+            if _is_vscode is None:
+                backoff = Backoff(max_backoff_seconds=2)
+                while _is_vscode is None:
+                    try:
+                        # TODO: not using `session.reactively().get()`
+                        # because it doesn't properly propagate
+                        # `Session.GetAborted`.
+                        response = await session.get(context)
+
+                        # Need to wait until session has been initialized,
+                        # which is once `client_info` is populated.
+                        if not response.HasField("client_info"):
+                            await backoff()
+                            continue
+
+                        # Technically `name` is required but at least the
+                        # MCP SDK doesn't validate it via Pydantic, but
+                        # Visual Studio Code always seems to include its
+                        # name, so if we don't have a name it is not
+                        # Visual Studio Code.
+                        if response.client_info.HasField("name"):
+                            _is_vscode = (
+                                response.client_info.name == "Visual Studio Code"
+                            )
+                        else:
+                            _is_vscode = False
+                    except Session.GetAborted as aborted:
+                        if type(aborted.error) == StateNotConstructed:
+                            await backoff()
+                            continue
+                        raise
+            assert _is_vscode is not None
+            return _is_vscode
+
+        # If this is a GET and the client is Visual Studio Code always
+        # ensure it has a 'last-event-id' so that it always replays
+        # from the aggregate stream.
         if request.method == "GET":
             if "last-event-id" not in request.headers:
-                async for response in session.reactively().get(context):
-                    if response.client_info.HasField("name"):
-                        if response.client_info.name == "Visual Studio Code":
-                            # Modify headers to always include a
-                            # 'last-event-id' so that we'll always
-                            # replay from the aggregate stream.
-                            headers = MutableHeaders(scope=scope)
-                            headers["last-event-id"] = "VS_CODE_INITIAL_GET_LAST_EVENT_ID"
-                            scope["headers"] = headers.raw
-                            request = Request(scope, receive)
-                        break
+                if await is_vscode():
+                    # Modify headers to always include a
+                    # 'last-event-id' so that we'll always
+                    # replay from the aggregate stream.
+                    mutable_headers = MutableHeaders(scope=scope)
+                    mutable_headers[
+                        "last-event-id"
+                    ] = "VSCODE_INITIAL_GET_LAST_EVENT_ID"
+                    scope["headers"] = mutable_headers.raw
+                    request = Request(scope, receive)
+
+        drop = False
+        async def post_send(message) -> None:
+            """
+            Helper that drops Visual Studio Code events from POST
+            requests since we send all events over GET.
+
+            We do this here so that the events are still sent
+            through the MCP SDK so everything gets cleaned up
+            correctly.
+            """
+            nonlocal drop
+            if message["type"] == "http.response.start":
+                if message["status"] == 200:
+                    for key, value in message["headers"]:
+                        if (
+                            key == b"content-type" and
+                            value == b"text/event-stream" and
+                            await is_vscode()
+                        ):
+                            # We want to drop Visual Studio Code
+                            # streams because we send everything
+                            # through the GET.
+                            drop = True
+                            break
+                # But always send "http.response.start" so Visual
+                # Studio Code at least gets the initial 200.
+                await send(message)
+            elif not drop:
+                # Send on messages for things like 202 Accepted.
+                await send(message)
 
         if mcp_session_id in self._http_transports:
             transport = self._http_transports[mcp_session_id]
-            await transport.handle_request(scope, receive, send)
+            await transport.handle_request(
+                scope,
+                receive,
+                send if request.method == "GET" else post_send,
+            )
             return
 
         http_transport = StreamableHTTPServerTransport(
@@ -1201,4 +1277,8 @@ class StreamableHTTPASGIApp:
 
         await started.wait()
 
-        await http_transport.handle_request(scope, receive, send)
+        await http_transport.handle_request(
+            scope,
+            receive,
+            send if request.method == "GET" else post_send,
+        )

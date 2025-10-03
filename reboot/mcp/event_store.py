@@ -1,13 +1,12 @@
 import mcp.types
 import pickle
 from mcp.server.streamable_http import (
-    GET_STREAM_KEY,
     EventCallback,
     EventId,
     EventMessage,
+    EventStore,
     StreamId,
 )
-from mcp.server.streamable_http import EventStore
 from mcp.shared.message import ServerMessageMetadata, SessionMessage
 from mcp.types import RequestId
 from rbt.mcp.v1.session_rbt import Session
@@ -75,11 +74,11 @@ class DurableEventStore(EventStore):
         qualified_last_event_id: EventId,
         send_callback: EventCallback,
     ) -> StreamId | None:
-        if qualified_last_event_id == "VS_CODE_INITIAL_GET_LAST_EVENT_ID":
-            import asyncio
-            await asyncio.Event().wait()
-
-        request_id, last_event_id = qualified_last_event_id.split("/")
+        if qualified_last_event_id == "VSCODE_INITIAL_GET_LAST_EVENT_ID":
+            request_id = "VSCODE_GET"
+            last_event_id = None
+        else:
+            request_id, last_event_id = qualified_last_event_id.split("/")
 
         async for message, event_id in replay(
             self._context,
@@ -170,7 +169,7 @@ async def replay(
 
                 yield SessionMessage(message, metadata=metadata), event.id
 
-                if isinstance(
+                if request_id != "VSCODE_GET" and isinstance(
                     message.root,
                     mcp.types.JSONRPCResponse | mcp.types.JSONRPCError,
                 ):
