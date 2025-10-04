@@ -2,6 +2,7 @@ from google.protobuf.empty_pb2 import Empty
 from rbt.mcp.v1.stream_rbt import (
     Event,
     Message,
+    MessagesResponse,
     PutRequest,
     PutResponse,
     ReplayRequest,
@@ -70,3 +71,10 @@ class StreamServicer(Stream.Servicer):
                 return ReplayResponse(events=events[i+1:])
 
         return ReplayResponse()
+
+    async def Messages(
+        self,
+        context: ReaderContext,
+        request: Empty,
+    ) -> MessagesResponse:
+        return MessagesResponse(messages=self.state.messages)

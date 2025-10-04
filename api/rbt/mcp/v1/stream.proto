@@ -37,6 +37,11 @@ service StreamMethods {
     option (rbt.v1alpha1.method).reader = {
     };
   }
+
+  rpc Messages(google.protobuf.Empty) returns (MessagesResponse) {
+    option (rbt.v1alpha1.method).reader = {
+    };
+  }
 }
 
 ////////////////////////////////////////////////////////////////////////
@@ -80,6 +85,12 @@ message ReplayRequest {
 
 message ReplayResponse {
   repeated Event events = 1;
+}
+
+////////////////////////////////////////////////////////////////////////
+
+message MessagesResponse {
+  repeated Message messages = 1;
 }
 
 ////////////////////////////////////////////////////////////////////////

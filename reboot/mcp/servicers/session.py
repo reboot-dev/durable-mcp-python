@@ -1,4 +1,5 @@
 import anyio
+import asyncio
 import mcp.types
 import pickle
 from contextvars import ContextVar
@@ -10,7 +11,7 @@ from contextlib import contextmanager
 from dataclasses import dataclass
 from log.log import get_logger
 from mcp.server.lowlevel.server import Server
-from mcp.shared.message import SessionMessage
+from mcp.shared.message import ServerMessageMetadata, SessionMessage
 from rbt.mcp.v1.session_rbt import (
     GetRequest,
     GetResponse,
@@ -24,8 +25,12 @@ from rbt.mcp.v1.stream_rbt import Stream
 from reboot.aio.auth.authorizers import allow
 from reboot.aio.contexts import ReaderContext, WorkflowContext, WriterContext
 from reboot.aio.workflows import at_least_once
-from reboot.mcp.event_store import get_event_id, qualified_stream_id
-from reboot.protobuf import from_model
+from reboot.mcp.event_store import (
+    get_event_id,
+    qualified_stream_id,
+    replace_whole_floats_with_ints,
+)
+from reboot.protobuf import as_dict, from_model
 
 logger = get_logger(__name__)
 
@@ -200,7 +205,7 @@ class SessionServicer(Session.Servicer):
                         # If this is a request, we need to grab the
                         # request ID and map it to something else that
                         # we actually send so that we can reconnect it
-                        # here.
+                        # to the response once we receive that.
                         if isinstance(write_message.message.root, mcp.types.JSONRPCRequest):
                             write_request_id = write_message.message.root.id
                             write_message.message.root.id = event_id
@@ -292,38 +297,42 @@ class SessionServicer(Session.Servicer):
             event_id = str(message.message.root.id)
 
             # Need to put the request ID that the MCP SDK used back on
-            # the message so it'll be handled/routed correctly.
-            request_id, related_request_id = self._write_request_ids[event_id]
+            # the message so it'll be handled/routed correctly, if it
+            # exists, which it might not if we've rebooted.
+            if event_id in self._write_request_ids:
+                request_id, related_request_id = self._write_request_ids[event_id]
 
-            message.message.root.id = request_id
+                message.message.root.id = request_id
 
-            stream_id = qualified_stream_id(
-                session_id=context.state_id,
-                request_id=related_request_id,
-            )
+                stream_id = qualified_stream_id(
+                    session_id=context.state_id,
+                    request_id=related_request_id,
+                )
 
-            stream = Stream.ref(stream_id)
+                stream = Stream.ref(stream_id)
 
-            # We also store the response for
-            # auditing/inspecting/debugging.
-            await stream.per_workflow(
-                f"Store response for request with event ID '{event_id}'",
-            ).put(
-                context,
-                message=from_model(
-                    message.message,
-                    by_alias=True,
-                    mode="json",
-                    exclude_none=True,
-                ),
-            )
+                # We also store the response for
+                # auditing/inspecting/debugging.
+                await stream.per_workflow(
+                    f"Store response for request with event ID '{event_id}'",
+                ).put(
+                    context,
+                    message=from_model(
+                        message.message,
+                        by_alias=True,
+                        mode="json",
+                        exclude_none=True,
+                    ),
+                )
 
-            with self._get_request_streams(
-                related_request_id,
-            ) as (read_stream, _):
-                read_stream_send, _ = read_stream
+                with self._get_request_streams(
+                    related_request_id,
+                ) as (read_stream, _):
+                    read_stream_send, _ = read_stream
 
-                await read_stream_send.send(message)
+                    await read_stream_send.send(message)
+            else:
+                logger.info(f"Ignoring client response as server must have rebooted")
 
             return HandleMessageResponse()
 
@@ -349,6 +358,79 @@ class SessionServicer(Session.Servicer):
             _, read_stream_receive = read_stream
             write_stream_send, _ = write_stream
 
+            async def cancel_outstanding_requests():
+                """
+                Helper that sends cancellations after a reboot for
+                any outstanding server sent requests, e.g.,
+                elicitations, since we'll be retrying them.
+                """
+                stream_id = qualified_stream_id(
+                    session_id=context.state_id,
+                    request_id=request_id,
+                )
+
+                stream = Stream.ref(stream_id)
+
+                # Need to _always_ get the messages because they
+                # likely will have changed since we rebooted!
+                response = await stream.always().messages(context)
+
+                outstanding_event_ids: set[str] = set()
+
+                for message in response.messages:
+                    json_rpc_message = mcp.types.JSONRPCMessage.model_validate(
+                        replace_whole_floats_with_ints(as_dict(message.message))
+                    )
+
+                    # Add an outstanding event ID for requests.
+                    if (
+                        isinstance(json_rpc_message.root, mcp.types.JSONRPCRequest) and
+                        # Need to distinguish a request we got from the
+                        # client from one sent by the server, the latter
+                        # of which will always have an `event_id`.
+                        message.HasField("event_id")
+                    ):
+                        assert message.event_id not in self._write_request_ids
+                        outstanding_event_ids.add(message.event_id)
+
+                    # Discard any outstanding event ID for requests that
+                    # have a response.
+                    if isinstance(json_rpc_message.root, mcp.types.JSONRPCResponse):
+                        outstanding_event_ids.discard(str(json_rpc_message.root.id))
+
+                for event_id in outstanding_event_ids:
+                    await write_stream_send.send(
+                        SessionMessage(
+                            message=mcp.types.JSONRPCMessage(
+                                mcp.types.JSONRPCNotification(
+                                    jsonrpc="2.0",
+                                    **mcp.types.ServerNotification(
+                                        mcp.types.CancelledNotification(
+                                            # TODO: figure out why `mypy`
+                                            # requires passing `method`
+                                            # which has a default.
+                                            method="notifications/cancelled",
+                                            params=mcp.types.CancelledNotificationParams(
+                                                reason="Server rebooted",
+                                                requestId=event_id,
+                                                _meta=mcp.types.NotificationParams.Meta(
+                                                    rebootEventId=f"cancelled-{event_id}",
+                                                ),
+                                            ),
+                                        ),
+                                    ).model_dump(
+                                        by_alias=True,
+                                        mode="json",
+                                        exclude_none=True,
+                                    ),
+                                ),
+                            ),
+                            metadata=ServerMessageMetadata(
+                                related_request_id=str(request_id),
+                            ),
+                        )
+                    )
+
             async def server_run():
                 assert _context.get() is None
                 _context.set(context)
@@ -373,7 +455,20 @@ class SessionServicer(Session.Servicer):
                 finally:
                     _context.set(None)
 
-            await at_least_once("Server run", context, server_run)
+            # Run this as an asyncio task because it blocks when
+            # calling `write_stream_send.send()`.
+            cancel_outstanding_requests_task = asyncio.create_task(
+                cancel_outstanding_requests()
+            )
+
+            try:
+                await at_least_once("Server run", context, server_run)
+            finally:
+                cancel_outstanding_requests_task.cancel()
+                try:
+                    await cancel_outstanding_requests_task
+                except:
+                    pass
 
             return RunResponse()
 
