@@ -37,12 +37,15 @@ class StreamServicer(Stream.Servicer):
         self.state.messages.append(
             Message(
                 message=request.message,
-                event_id=(request.event_id
-                          if request.HasField("event_id") else None),
-                related_request_id=(request.related_request_id
-                                    if request.HasField("related_request_id")
-                                    else None),
-            ))
+                event_id=(
+                    request.event_id if request.HasField("event_id") else None
+                ),
+                related_request_id=(
+                    request.related_request_id
+                    if request.HasField("related_request_id") else None
+                ),
+            )
+        )
         return PutResponse()
 
     async def Replay(
@@ -55,10 +58,12 @@ class StreamServicer(Stream.Servicer):
             Event(
                 id=message.event_id,
                 message=message.message,
-                related_request_id=(message.related_request_id
-                                    if message.HasField("related_request_id")
-                                    else None),
-            ) for message in self.state.messages
+                related_request_id=(
+                    message.related_request_id
+                    if message.HasField("related_request_id") else None
+                ),
+            )
+            for message in self.state.messages
             if message.HasField("event_id")
         ]
 

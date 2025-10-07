@@ -233,8 +233,8 @@ class DurableContextProtocol(Protocol):
         message: str,
         schema: type[ElicitSchemaModelT],
     ) -> ElicitationResult:
-         """
-         Elicit information from the client/user.
+        """
+        Elicit information from the client/user.
 
         This method can be used to interactively ask for additional
         information from the client within a tool's execution. The
@@ -260,8 +260,8 @@ class DurableContextProtocol(Protocol):
             Check the result.action to determine if the user accepted,
             declined, or cancelled.  The result.data will only be
             populated if action is "accept" and validation succeeded.
-         """
-         ...
+        """
+        ...
 
 
 class DurableContext(WorkflowContext, DurableContextProtocol):
@@ -413,7 +413,6 @@ class DurableMCP:
         # from `resource`? We also have to override the `resource()`
         # decorator anyway to get templates.
         raise NotImplementedError("Use `resource()` decorator instead")
-
 
     def prompt(
         self,
@@ -661,7 +660,8 @@ def _wrap_tool(fn: mcp.types.AnyFunction) -> mcp.types.AnyFunction:
             issubclass(annotation, fastmcp.Context)
         ):
             raise TypeError(
-                "`DurableMCP` only injects `DurableContext` not `Context`")
+                "`DurableMCP` only injects `DurableContext` not `Context`"
+            )
         if (
             isinstance(annotation, type) and
             issubclass(annotation, DurableContext)
@@ -758,7 +758,9 @@ def _wrap_tool(fn: mcp.types.AnyFunction) -> mcp.types.AnyFunction:
                 related_request_id=ctx.request_id,
             )
 
-        context.report_progress = MethodType(report_progress, context)  # type: ignore[method-assign]
+        context.report_progress = MethodType(
+            report_progress, context
+        )  # type: ignore[method-assign]
 
         async def log(
             self,
@@ -817,7 +819,9 @@ def _wrap_tool(fn: mcp.types.AnyFunction) -> mcp.types.AnyFunction:
         async def debug(self, message: str) -> None:
             await self.log("debug", message)
 
-        context.debug = MethodType(debug, context)  # type: ignore[method-assign]
+        context.debug = MethodType(
+            debug, context
+        )  # type: ignore[method-assign]
 
         async def info(self, message: str) -> None:
             await self.log("info", message)
@@ -827,12 +831,16 @@ def _wrap_tool(fn: mcp.types.AnyFunction) -> mcp.types.AnyFunction:
         async def warning(self, message: str) -> None:
             await self.log("warning", message)
 
-        context.warning = MethodType(warning, context)  # type: ignore[method-assign]
+        context.warning = MethodType(
+            warning, context
+        )  # type: ignore[method-assign]
 
         async def error(self, message: str) -> None:
             await self.log("error", message)
 
-        context.error = MethodType(error, context)  # type: ignore[method-assign]
+        context.error = MethodType(
+            error, context
+        )  # type: ignore[method-assign]
 
         async def elicit(
             self,
@@ -933,7 +941,9 @@ def _wrap_tool(fn: mcp.types.AnyFunction) -> mcp.types.AnyFunction:
                     f"Unexpected elicitation action: {result.action}"
                 )
 
-        context.elicit = MethodType(elicit, context)  # type: ignore[method-assign]
+        context.elicit = MethodType(
+            elicit, context
+        )  # type: ignore[method-assign]
 
         for context_parameter_name in context_parameter_names:
             kwargs[context_parameter_name] = context
@@ -1110,7 +1120,8 @@ class StreamableHTTPASGIApp:
                         # Visual Studio Code.
                         if response.client_info.HasField("name"):
                             _is_vscode = (
-                                response.client_info.name == "Visual Studio Code"
+                                response.client_info.name ==
+                                "Visual Studio Code"
                             )
                         else:
                             _is_vscode = False
@@ -1132,13 +1143,13 @@ class StreamableHTTPASGIApp:
                     # 'last-event-id' so that we'll always
                     # replay from the aggregate stream.
                     mutable_headers = MutableHeaders(scope=scope)
-                    mutable_headers[
-                        "last-event-id"
-                    ] = "VSCODE_INITIAL_GET_LAST_EVENT_ID"
+                    mutable_headers["last-event-id"
+                                   ] = "VSCODE_INITIAL_GET_LAST_EVENT_ID"
                     scope["headers"] = mutable_headers.raw
                     request = Request(scope, receive)
 
         drop = False
+
         async def post_send(message) -> None:
             """
             Helper that drops Visual Studio Code events from POST
@@ -1154,8 +1165,7 @@ class StreamableHTTPASGIApp:
                     for key, value in message["headers"]:
                         if (
                             key == b"content-type" and
-                            value == b"text/event-stream" and
-                            await is_vscode()
+                            value == b"text/event-stream" and await is_vscode()
                         ):
                             # We want to drop Visual Studio Code
                             # streams because we send everything
