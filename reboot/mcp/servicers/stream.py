@@ -8,9 +8,13 @@ from rbt.mcp.v1.stream_rbt import (
     ReplayRequest,
     ReplayResponse,
     Stream,
+    GetStreamRequest,
+    GetStreamResponse,
 )
 from reboot.aio.auth.authorizers import allow
 from reboot.aio.contexts import ReaderContext, WriterContext
+from google.protobuf.json_format import MessageToDict
+import json
 
 
 class StreamServicer(Stream.Servicer):
@@ -33,16 +37,12 @@ class StreamServicer(Stream.Servicer):
         self.state.messages.append(
             Message(
                 message=request.message,
-                event_id=(
-                    request.event_id
-                    if request.HasField("event_id") else None
-                ),
-                related_request_id=(
-                    request.related_request_id
-                    if request.HasField("related_request_id") else None
-                ),
-            )
-        )
+                event_id=(request.event_id
+                          if request.HasField("event_id") else None),
+                related_request_id=(request.related_request_id
+                                    if request.HasField("related_request_id")
+                                    else None),
+            ))
         return PutResponse()
 
     async def Replay(
@@ -55,12 +55,11 @@ class StreamServicer(Stream.Servicer):
             Event(
                 id=message.event_id,
                 message=message.message,
-                related_request_id=(
-                    message.related_request_id
-                    if message.HasField("related_request_id") else None
-                ),
-            )
-            for message in self.state.messages if message.HasField("event_id")
+                related_request_id=(message.related_request_id
+                                    if message.HasField("related_request_id")
+                                    else None),
+            ) for message in self.state.messages
+            if message.HasField("event_id")
         ]
 
         if not request.HasField("last_event_id"):
@@ -68,7 +67,7 @@ class StreamServicer(Stream.Servicer):
 
         for i, event in enumerate(events):
             if event.id == request.last_event_id:
-                return ReplayResponse(events=events[i+1:])
+                return ReplayResponse(events=events[i + 1:])
 
         return ReplayResponse()
 
@@ -78,3 +77,14 @@ class StreamServicer(Stream.Servicer):
         request: Empty,
     ) -> MessagesResponse:
         return MessagesResponse(messages=self.state.messages)
+
+    async def GetStream(
+        self,
+        context: ReaderContext,
+        request: GetStreamRequest,
+    ) -> GetStreamResponse:
+        json_array = [
+            MessageToDict(message) for message in self.state.messages
+        ]
+
+        return GetStreamResponse(json_messages=json.dumps(json_array))

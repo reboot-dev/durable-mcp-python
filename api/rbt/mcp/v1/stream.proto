@@ -42,6 +42,11 @@ service StreamMethods {
     option (rbt.v1alpha1.method).reader = {
     };
   }
+  
+  rpc GetStream(GetStreamRequest) returns (GetStreamResponse) {
+    option (rbt.v1alpha1.method).reader = {
+    };
+  }
 }
 
 ////////////////////////////////////////////////////////////////////////
@@ -93,4 +98,10 @@ message MessagesResponse {
   repeated Message messages = 1;
 }
 
+////////////////////////////////////////////////////////////////////////
+message GetStreamRequest {}
+
+message GetStreamResponse {
+  string json_messages = 1;
+}
 ////////////////////////////////////////////////////////////////////////
