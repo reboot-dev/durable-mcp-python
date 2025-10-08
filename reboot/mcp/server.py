@@ -51,7 +51,8 @@ from starlette.applications import Starlette
 from starlette.datastructures import MutableHeaders
 from starlette.requests import Request
 from starlette.responses import Response, StreamingResponse
-from starlette.routing import Route
+from starlette.routing import Route, Mount
+from starlette.staticfiles import StaticFiles
 from starlette.types import Receive, Scope, Send
 from types import MethodType
 from typing import Any, Callable, Literal, Protocol, TypeAlias, cast
@@ -572,7 +573,19 @@ class DurableMCP:
         Returns a Reboot `Application` for running the MCP tools,
         resources, prompts, etc that were defined.
         """
-        application = Application(servicers=self.servicers())
+
+        async def initialize(context: InitializeContext):
+            await Sessions.Create(context, SORTED_MAP_SESSIONS_INDEX)
+
+        application = Application(
+            servicers=self.servicers(), initialize=initialize
+        )
+
+        # Mount the mcp-sequence diagram inspect dashboard.
+        application.http.mount("/__/mcp-sequences", factory=self._inspect_app)
+        print(
+            "You can inspect your MCP sequences at http://127.0.0.1:9991/__/mcp-sequences"
+        )
 
         application.http.mount(
             self._path,
@@ -580,6 +593,10 @@ class DurableMCP:
         )
 
         return application
+
+    @property
+    def _inspect_app(self):
+        return functools.partial(_inspect_app)
 
     @property
     def streamable_http_app_factory(self):
@@ -591,6 +608,19 @@ class DurableMCP:
             self._prompts,
             self._tools,
         )
+
+
+def _inspect_app(
+    external_context_from_request: Callable[[Request], ExternalContext],
+):
+    return Starlette(
+        routes=[
+            Mount(
+                "/", StaticFiles(directory="reboot/inspect/dist", html=True),
+                name='static'
+            ),
+        ]
+    )
 
 
 def _streamable_http_app(
