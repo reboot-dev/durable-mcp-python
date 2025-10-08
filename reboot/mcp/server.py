@@ -22,11 +22,11 @@ from mcp.server.streamable_http import (
     StreamableHTTPServerTransport,
 )
 from mcp.shared.message import ServerMessageMetadata
-from rbt.mcp.v1.session_rbt import Session
+from rbt.mcp.v1.session_rbt import Session, Sessions
 from rbt.v1alpha1.errors_pb2 import StateNotConstructed
 from reboot.aio.applications import Application
 from reboot.aio.contexts import EffectValidation, WorkflowContext
-from reboot.aio.external import ExternalContext
+from reboot.aio.external import ExternalContext, InitializeContext
 from reboot.aio.types import StateRef
 from reboot.aio.workflows import at_least_once
 from reboot.mcp.event_store import (
@@ -36,10 +36,12 @@ from reboot.mcp.event_store import (
 )
 from reboot.mcp.servicers.session import (
     SessionServicer,
+    SessionsServicer,
     _servers,
     _context,
 )
 from reboot.mcp.servicers.stream import StreamServicer
+from reboot.mcp.settings import SORTED_MAP_SESSIONS_INDEX
 from reboot.std.collections.v1 import sorted_map
 from rebootdev.aio.headers import CONSENSUS_ID_HEADER, STATE_REF_HEADER
 from rebootdev.aio.backoff import Backoff
@@ -334,7 +336,11 @@ class DurableMCP:
         return self._path
 
     def servicers(self):
-        return [SessionServicer, StreamServicer] + sorted_map.servicers()
+        return [
+            SessionServicer,
+            SessionsServicer,
+            StreamServicer,
+        ] + sorted_map.servicers()
 
     def resource(
         self,
