@@ -584,7 +584,7 @@ class DurableMCP:
         # Mount the mcp-sequence diagram inspect dashboard.
         application.http.mount("/__/mcp-sequences", factory=self._inspect_app)
         print(
-            "You can inspect your MCP sequences at http://127.0.0.1:9991/__/mcp-sequences"
+            "You can inspect your MCP sequences at http://127.0.0.1:9991/__/mcp-sequences\n"
         )
 
         application.http.mount(

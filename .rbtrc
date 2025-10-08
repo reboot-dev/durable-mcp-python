@@ -4,3 +4,4 @@ generate api/
 # Tell `rbt` where to output its generated files.
 # The paths are different for backend and frontend code.
 generate --python=api/
+generate --react=reboot/inspect/api
