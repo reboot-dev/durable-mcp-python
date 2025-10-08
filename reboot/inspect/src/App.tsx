@@ -51,12 +51,14 @@ function StreamSequenceDiagram({
 }: {
   selectedStreamId: string;
 }) {
-  const { useGetStream } = useStream({
+  const { useMessages } = useStream({
     id: selectedStreamId,
   });
-  const { response } = useGetStream();
+  const { response } = useMessages();
 
-  const messages = response ? JSON.parse(response.jsonMessages) : [];
+  const messages = response
+    ? response.messages.map((msg: any) => msg.toJson())
+    : [];
 
   return (
     <>
