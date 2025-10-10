@@ -20,8 +20,15 @@ from rbt.mcp.v1.session_rbt import (
     RunRequest,
     RunResponse,
     Session,
+    Sessions,
+    ListRequest,
+    ListResponse,
+    CreateRequest,
+    CreateResponse,
 )
 from rbt.mcp.v1.stream_rbt import Stream
+from rbt.v1alpha1.errors_pb2 import StateNotConstructed
+from rebootdev.aio.aborted import Aborted
 from reboot.aio.auth.authorizers import allow
 from reboot.aio.contexts import ReaderContext, WorkflowContext, WriterContext
 from reboot.aio.workflows import at_least_once
@@ -31,6 +38,10 @@ from reboot.mcp.event_store import (
     replace_whole_floats_with_ints,
 )
 from reboot.protobuf import as_dict, from_model
+from reboot.mcp.event_store import get_event_id, qualified_stream_id
+from reboot.protobuf import from_model
+from reboot.std.collections.v1.sorted_map import SortedMap
+from reboot.mcp.settings import SORTED_MAP_SESSIONS_INDEX
 
 logger = get_logger(__name__)
 
@@ -43,6 +54,41 @@ _context: ContextVar[WorkflowContext | None] = ContextVar(
     "`WorkflowContext` of current message being handled",
     default=None,
 )
+
+
+class SessionsServicer(Sessions.Servicer):
+
+    def authorizer(self):
+        return allow()
+
+    async def Create(
+        self,
+        context: WriterContext,
+        request: CreateRequest,
+    ) -> CreateResponse:
+
+        return CreateResponse()
+
+    async def List(
+        self,
+        context: ReaderContext,
+        request: ListRequest,
+    ) -> ListResponse:
+        try:
+            session_ids_range = await SortedMap.ref(
+                SORTED_MAP_SESSIONS_INDEX
+            ).Range(context, limit=request.limit if request.limit else 100)
+            session_ids = [e.key for e in session_ids_range.entries]
+        except Aborted as aborted:
+            match aborted.error:
+                case StateNotConstructed():  # type: ignore[misc]
+                    # Suppress errors if List called before SortedMap created.
+                    # No sessions yet.
+                    session_ids = []
+                case _:
+                    raise
+
+        return ListResponse(session_ids=session_ids)
 
 
 @dataclass(kw_only=True)
@@ -66,8 +112,7 @@ class SessionServicer(Session.Servicer):
         self._write_request_ids: dict[
             str,
             # (server generated request ID, related request ID)
-            tuple[mcp.types.RequestId, mcp.types.RequestId]
-        ] = {}
+            tuple[mcp.types.RequestId, mcp.types.RequestId]] = {}
 
     def authorizer(self):
         return allow()
@@ -84,10 +129,10 @@ class SessionServicer(Session.Servicer):
                 # Create streams for communicating with MCP server.
                 self._request_streams[request_id] = Streams(
                     refs=1,  # Initial reference count.
-                    read_stream=anyio.create_memory_object_stream[
-                        SessionMessage | Exception](),
-                    write_stream=anyio.create_memory_object_stream[
-                        SessionMessage](),
+                    read_stream=anyio.
+                    create_memory_object_stream[SessionMessage | Exception](),
+                    write_stream=anyio.
+                    create_memory_object_stream[SessionMessage](),
                 )
             else:
                 self._request_streams[request_id].refs += 1
@@ -108,6 +153,10 @@ class SessionServicer(Session.Servicer):
         context: WorkflowContext,
         request: HandleMessageRequest,
     ) -> HandleMessageResponse:
+        # Add session ID to sessions index.
+        await SortedMap.ref(SORTED_MAP_SESSIONS_INDEX
+                           ).insert(context, entries={context.state_id: b""})
+
         message = pickle.loads(request.message_bytes)
 
         if isinstance(message.message.root, mcp.types.JSONRPCRequest):
@@ -151,9 +200,10 @@ class SessionServicer(Session.Servicer):
 
             # Store client info on initialize.
             if (
-                isinstance(message.message.root, mcp.types.JSONRPCRequest)
-                and message.message.root.method == "initialize"
+                isinstance(message.message.root, mcp.types.JSONRPCRequest) and
+                message.message.root.method == "initialize"
             ):
+
                 async def store_client_info(state):
                     assert not state.HasField("client_info")
                     client_info = message.message.root.params["clientInfo"]
@@ -206,7 +256,10 @@ class SessionServicer(Session.Servicer):
                         # request ID and map it to something else that
                         # we actually send so that we can reconnect it
                         # to the response once we receive that.
-                        if isinstance(write_message.message.root, mcp.types.JSONRPCRequest):
+                        if isinstance(
+                            write_message.message.root,
+                            mcp.types.JSONRPCRequest
+                        ):
                             write_request_id = write_message.message.root.id
                             write_message.message.root.id = event_id
                             assert related_request_id is not None
@@ -276,7 +329,9 @@ class SessionServicer(Session.Servicer):
                 # this function and `Run()`.
                 await run_task
 
-                logger.debug(f"Completed ({type(message).__name__}): {message}")
+                logger.debug(
+                    f"Completed ({type(message).__name__}): {message}"
+                )
 
                 return HandleMessageResponse()
 
@@ -300,7 +355,8 @@ class SessionServicer(Session.Servicer):
             # the message so it'll be handled/routed correctly, if it
             # exists, which it might not if we've rebooted.
             if event_id in self._write_request_ids:
-                request_id, related_request_id = self._write_request_ids[event_id]
+                request_id, related_request_id = self._write_request_ids[
+                    event_id]
 
                 message.message.root.id = request_id
 
@@ -332,7 +388,9 @@ class SessionServicer(Session.Servicer):
 
                     await read_stream_send.send(message)
             else:
-                logger.info(f"Ignoring client response as server must have rebooted")
+                logger.info(
+                    f"Ignoring client response as server must have rebooted"
+                )
 
             return HandleMessageResponse()
 
@@ -379,12 +437,16 @@ class SessionServicer(Session.Servicer):
 
                 for message in response.messages:
                     json_rpc_message = mcp.types.JSONRPCMessage.model_validate(
-                        replace_whole_floats_with_ints(as_dict(message.message))
+                        replace_whole_floats_with_ints(
+                            as_dict(message.message)
+                        )
                     )
 
                     # Add an outstanding event ID for requests.
                     if (
-                        isinstance(json_rpc_message.root, mcp.types.JSONRPCRequest) and
+                        isinstance(
+                            json_rpc_message.root, mcp.types.JSONRPCRequest
+                        ) and
                         # Need to distinguish a request we got from the
                         # client from one sent by the server, the latter
                         # of which will always have an `event_id`.
@@ -395,8 +457,12 @@ class SessionServicer(Session.Servicer):
 
                     # Discard any outstanding event ID for requests that
                     # have a response.
-                    if isinstance(json_rpc_message.root, mcp.types.JSONRPCResponse):
-                        outstanding_event_ids.discard(str(json_rpc_message.root.id))
+                    if isinstance(
+                        json_rpc_message.root, mcp.types.JSONRPCResponse
+                    ):
+                        outstanding_event_ids.discard(
+                            str(json_rpc_message.root.id)
+                        )
 
                 for event_id in outstanding_event_ids:
                     await write_stream_send.send(
@@ -410,11 +476,14 @@ class SessionServicer(Session.Servicer):
                                             # requires passing `method`
                                             # which has a default.
                                             method="notifications/cancelled",
-                                            params=mcp.types.CancelledNotificationParams(
+                                            params=mcp.types.
+                                            CancelledNotificationParams(
                                                 reason="Server rebooted",
                                                 requestId=event_id,
-                                                _meta=mcp.types.NotificationParams.Meta(
-                                                    rebootEventId=f"cancelled-{event_id}",
+                                                _meta=mcp.types.
+                                                NotificationParams.Meta(
+                                                    rebootEventId=
+                                                    f"cancelled-{event_id}",
                                                 ),
                                             ),
                                         ),
@@ -472,7 +541,7 @@ class SessionServicer(Session.Servicer):
 
             return RunResponse()
 
-    async def get(
+    async def Get(
         self,
         context: ReaderContext,
         request: GetRequest,

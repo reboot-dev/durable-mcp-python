@@ -32,31 +32,37 @@ rm -rf dist build *.egg-info
 uv pip install --upgrade build twine
 ```
 
-4. Build sdist and wheel:
+4. Build inspect frontend
+
+```console
+cd reboot/inspect && npm install && npm run build
+```
+
+5. Build sdist and wheel:
 
 ```console
 python -m build
 ```
 
-5. Validate artifacts:
+6. Validate artifacts:
 
 ```console
 twine check dist/*
 ```
 
-6. Upload to PyPI:
+7. Upload to PyPI:
 
 ```console
 twine upload dist/*
 ```
 
-7. Push all local tags:
+8. Push all local tags:
 
 ```console
 git push --tags origin
 ```
 
-8. Update GitHub releases
+9. Update GitHub releases
 
 Go to https://github.com/reboot-dev/durable-mcp-python/releases/new
 and create a new release for the version just published. See other

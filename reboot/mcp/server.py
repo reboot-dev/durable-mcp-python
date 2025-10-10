@@ -22,11 +22,11 @@ from mcp.server.streamable_http import (
     StreamableHTTPServerTransport,
 )
 from mcp.shared.message import ServerMessageMetadata
-from rbt.mcp.v1.session_rbt import Session
+from rbt.mcp.v1.session_rbt import Session, Sessions
 from rbt.v1alpha1.errors_pb2 import StateNotConstructed
 from reboot.aio.applications import Application
 from reboot.aio.contexts import EffectValidation, WorkflowContext
-from reboot.aio.external import ExternalContext
+from reboot.aio.external import ExternalContext, InitializeContext
 from reboot.aio.types import StateRef
 from reboot.aio.workflows import at_least_once
 from reboot.mcp.event_store import (
@@ -36,10 +36,12 @@ from reboot.mcp.event_store import (
 )
 from reboot.mcp.servicers.session import (
     SessionServicer,
+    SessionsServicer,
     _servers,
     _context,
 )
 from reboot.mcp.servicers.stream import StreamServicer
+from reboot.mcp.settings import SORTED_MAP_SESSIONS_INDEX
 from reboot.std.collections.v1 import sorted_map
 from rebootdev.aio.headers import CONSENSUS_ID_HEADER, STATE_REF_HEADER
 from rebootdev.aio.backoff import Backoff
@@ -49,7 +51,8 @@ from starlette.applications import Starlette
 from starlette.datastructures import MutableHeaders
 from starlette.requests import Request
 from starlette.responses import Response, StreamingResponse
-from starlette.routing import Route
+from starlette.routing import Route, Mount
+from starlette.staticfiles import StaticFiles
 from starlette.types import Receive, Scope, Send
 from types import MethodType
 from typing import Any, Callable, Literal, Protocol, TypeAlias, cast
@@ -233,8 +236,8 @@ class DurableContextProtocol(Protocol):
         message: str,
         schema: type[ElicitSchemaModelT],
     ) -> ElicitationResult:
-         """
-         Elicit information from the client/user.
+        """
+        Elicit information from the client/user.
 
         This method can be used to interactively ask for additional
         information from the client within a tool's execution. The
@@ -260,8 +263,8 @@ class DurableContextProtocol(Protocol):
             Check the result.action to determine if the user accepted,
             declined, or cancelled.  The result.data will only be
             populated if action is "accept" and validation succeeded.
-         """
-         ...
+        """
+        ...
 
 
 class DurableContext(WorkflowContext, DurableContextProtocol):
@@ -334,7 +337,11 @@ class DurableMCP:
         return self._path
 
     def servicers(self):
-        return [SessionServicer, StreamServicer] + sorted_map.servicers()
+        return [
+            SessionServicer,
+            SessionsServicer,
+            StreamServicer,
+        ] + sorted_map.servicers()
 
     def resource(
         self,
@@ -413,7 +420,6 @@ class DurableMCP:
         # from `resource`? We also have to override the `resource()`
         # decorator anyway to get templates.
         raise NotImplementedError("Use `resource()` decorator instead")
-
 
     def prompt(
         self,
@@ -567,7 +573,19 @@ class DurableMCP:
         Returns a Reboot `Application` for running the MCP tools,
         resources, prompts, etc that were defined.
         """
-        application = Application(servicers=self.servicers())
+
+        async def initialize(context: InitializeContext):
+            await Sessions.Create(context, SORTED_MAP_SESSIONS_INDEX)
+
+        application = Application(
+            servicers=self.servicers(), initialize=initialize
+        )
+
+        # Mount the mcp-sequence diagram inspect dashboard.
+        application.http.mount("/__/mcp-sequences", factory=self._inspect_app)
+        print(
+            "You can inspect your MCP sequences at http://127.0.0.1:9991/__/mcp-sequences\n"
+        )
 
         application.http.mount(
             self._path,
@@ -575,6 +593,10 @@ class DurableMCP:
         )
 
         return application
+
+    @property
+    def _inspect_app(self):
+        return functools.partial(_inspect_app)
 
     @property
     def streamable_http_app_factory(self):
@@ -586,6 +608,19 @@ class DurableMCP:
             self._prompts,
             self._tools,
         )
+
+
+def _inspect_app(
+    external_context_from_request: Callable[[Request], ExternalContext],
+):
+    return Starlette(
+        routes=[
+            Mount(
+                "/", StaticFiles(directory="reboot/inspect/dist", html=True),
+                name='static'
+            ),
+        ]
+    )
 
 
 def _streamable_http_app(
@@ -661,7 +696,8 @@ def _wrap_tool(fn: mcp.types.AnyFunction) -> mcp.types.AnyFunction:
             issubclass(annotation, fastmcp.Context)
         ):
             raise TypeError(
-                "`DurableMCP` only injects `DurableContext` not `Context`")
+                "`DurableMCP` only injects `DurableContext` not `Context`"
+            )
         if (
             isinstance(annotation, type) and
             issubclass(annotation, DurableContext)
@@ -758,7 +794,9 @@ def _wrap_tool(fn: mcp.types.AnyFunction) -> mcp.types.AnyFunction:
                 related_request_id=ctx.request_id,
             )
 
-        context.report_progress = MethodType(report_progress, context)  # type: ignore[method-assign]
+        context.report_progress = MethodType(
+            report_progress, context
+        )  # type: ignore[method-assign]
 
         async def log(
             self,
@@ -817,7 +855,9 @@ def _wrap_tool(fn: mcp.types.AnyFunction) -> mcp.types.AnyFunction:
         async def debug(self, message: str) -> None:
             await self.log("debug", message)
 
-        context.debug = MethodType(debug, context)  # type: ignore[method-assign]
+        context.debug = MethodType(
+            debug, context
+        )  # type: ignore[method-assign]
 
         async def info(self, message: str) -> None:
             await self.log("info", message)
@@ -827,12 +867,16 @@ def _wrap_tool(fn: mcp.types.AnyFunction) -> mcp.types.AnyFunction:
         async def warning(self, message: str) -> None:
             await self.log("warning", message)
 
-        context.warning = MethodType(warning, context)  # type: ignore[method-assign]
+        context.warning = MethodType(
+            warning, context
+        )  # type: ignore[method-assign]
 
         async def error(self, message: str) -> None:
             await self.log("error", message)
 
-        context.error = MethodType(error, context)  # type: ignore[method-assign]
+        context.error = MethodType(
+            error, context
+        )  # type: ignore[method-assign]
 
         async def elicit(
             self,
@@ -933,7 +977,9 @@ def _wrap_tool(fn: mcp.types.AnyFunction) -> mcp.types.AnyFunction:
                     f"Unexpected elicitation action: {result.action}"
                 )
 
-        context.elicit = MethodType(elicit, context)  # type: ignore[method-assign]
+        context.elicit = MethodType(
+            elicit, context
+        )  # type: ignore[method-assign]
 
         for context_parameter_name in context_parameter_names:
             kwargs[context_parameter_name] = context
@@ -1110,7 +1156,8 @@ class StreamableHTTPASGIApp:
                         # Visual Studio Code.
                         if response.client_info.HasField("name"):
                             _is_vscode = (
-                                response.client_info.name == "Visual Studio Code"
+                                response.client_info.name ==
+                                "Visual Studio Code"
                             )
                         else:
                             _is_vscode = False
@@ -1132,13 +1179,13 @@ class StreamableHTTPASGIApp:
                     # 'last-event-id' so that we'll always
                     # replay from the aggregate stream.
                     mutable_headers = MutableHeaders(scope=scope)
-                    mutable_headers[
-                        "last-event-id"
-                    ] = "VSCODE_INITIAL_GET_LAST_EVENT_ID"
+                    mutable_headers["last-event-id"
+                                   ] = "VSCODE_INITIAL_GET_LAST_EVENT_ID"
                     scope["headers"] = mutable_headers.raw
                     request = Request(scope, receive)
 
         drop = False
+
         async def post_send(message) -> None:
             """
             Helper that drops Visual Studio Code events from POST
@@ -1154,8 +1201,7 @@ class StreamableHTTPASGIApp:
                     for key, value in message["headers"]:
                         if (
                             key == b"content-type" and
-                            value == b"text/event-stream" and
-                            await is_vscode()
+                            value == b"text/event-stream" and await is_vscode()
                         ):
                             # We want to drop Visual Studio Code
                             # streams because we send everything

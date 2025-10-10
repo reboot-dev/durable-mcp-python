@@ -6,6 +6,42 @@ import "rbt/v1alpha1/options.proto";
 
 ////////////////////////////////////////////////////////////////////////
 
+
+message Sessions {
+   option (rbt.v1alpha1.state) = {
+  };
+}
+
+service SessionsMethods {
+  rpc Create(CreateRequest) returns (CreateResponse) {
+    option (rbt.v1alpha1.method) = {
+      writer: {
+        constructor: {},
+      }
+    };
+  }
+
+  rpc List(ListRequest) returns (ListResponse) {
+    option (rbt.v1alpha1.method).reader = {
+    };
+  }
+}
+
+message ListRequest {
+  // Maximum number of session IDs to return.
+  optional uint32 limit = 1;
+}
+
+message ListResponse {
+  repeated string session_ids = 1;
+}
+
+message CreateRequest {}
+
+message CreateResponse {}
+
+////////////////////////////////////////////////////////////////////////
+
 message Session {
   option (rbt.v1alpha1.state) = {
   };

@@ -34,8 +34,7 @@ class StreamServicer(Stream.Servicer):
             Message(
                 message=request.message,
                 event_id=(
-                    request.event_id
-                    if request.HasField("event_id") else None
+                    request.event_id if request.HasField("event_id") else None
                 ),
                 related_request_id=(
                     request.related_request_id
@@ -60,7 +59,8 @@ class StreamServicer(Stream.Servicer):
                     if message.HasField("related_request_id") else None
                 ),
             )
-            for message in self.state.messages if message.HasField("event_id")
+            for message in self.state.messages
+            if message.HasField("event_id")
         ]
 
         if not request.HasField("last_event_id"):
@@ -68,7 +68,7 @@ class StreamServicer(Stream.Servicer):
 
         for i, event in enumerate(events):
             if event.id == request.last_event_id:
-                return ReplayResponse(events=events[i+1:])
+                return ReplayResponse(events=events[i + 1:])
 
         return ReplayResponse()
 
