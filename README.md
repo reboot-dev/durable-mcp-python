@@ -118,8 +118,8 @@ URL = "http://localhost:9991"
 
 async def main():
     # `connect()` is a helper that creates a streamable HTTP client
-    # and session using the MCP SDK. You can also write a client the
-    # direclty uses the MCP SDK you prefer!
+    # and session using the MCP SDK. You can also write a client that
+    # directly uses the MCP SDK, or use any other MCP client library!
     async with connect(URL + "/mcp") as (
         session, session_id, protocol_version
     ):
@@ -133,10 +133,10 @@ if __name__ == '__main__':
 
 ### Performing a side-effect "at least once"
 
-Within your tools (and eventually within your prompts and resources
-too), you can try and perform a side-effect that it is safe to try one
-or more times until success using `at_least_once`. Usually what makes
-it safe to perform one or more times is that you can somehow do it
+Within your tools (and soon within your prompts and resources too),
+you can perform a side-effect that is safe to try one or more times
+until success using `at_least_once`. Usually what makes it safe to
+perform one or more times is that you can somehow do it
 _idempotently_, e.g., passing an idempotency key as part of an API
 call. Use `at_least_once` for this, for example:
 
@@ -172,11 +172,11 @@ async def add(a: int, b: int, context: DurableContext) -> int:
 
 ### Performing a side-effect "at most once"
 
-Within your tools (and eventually within your prompts and resources
-too), you can try and perform a side-effect that can _only_ be tried
-once using `at_most_once`. If you can attempt to perform the
-side-effect more than once always prefer `at_least_once`. Here's an
-example of `at_most_once`:
+Within your tools (and soon within your prompts and resources too),
+you can perform a side-effect that can _only_ be tried once using
+`at_most_once` (if you can perform the side-effect more than once
+using safely then always prefer `at_least_once`). Here's an example of
+`at_most_once`:
 
 ```python
 from reboot.aio.workflows import at_least_once
@@ -220,9 +220,11 @@ Start by enabling debug logging:
 mcp = DurableMCP(path="/mcp", log_level="DEBUG")
 ```
 
-Then consider wrapping your tool/prompt/etc functions in a
-`try`/`except` because the MCP SDK will "swallow" errors and all that
-the client gets back is just that the request failed.
+The MCP SDK is aggressive about "swallowing" errors on the server side
+and just returning "request failed" so we do our best to log stack
+traces on the server. If you find a place where you've needed to add
+your own `try`/`catch` please let us know we'd love to log that for
+you automatically.
 
 ### Supported client --> server _requests_:
 - [x] `initialize`
@@ -260,11 +262,10 @@ the client gets back is just that the request failed.
 - [ ] `notifications/cancelled`
 
 ### TODO:
+- [ ] Auth pass through to MCP SDK
 - [ ] Adding tools, resources, and prompts dynamically
 - [ ] Add examples of how to test via `Reboot().start/up/down/stop()`
 - [ ] Add example of rebooting server using MCP Inspector version [0.16.7](https://github.com/modelcontextprotocol/inspector/releases/tag/0.16.7) which includes [modelcontextprotocol/inspector#787](https://github.com/modelcontextprotocol/inspector/pull/787)
-- [ ] Auth
-- [ ] Docs at `docs.reboot.dev`
 - [ ] `yapf`
 - [ ] Pydantic `state` for each session
 
