@@ -173,10 +173,9 @@ async def add(a: int, b: int, context: DurableContext) -> int:
 ### Performing a side-effect "at most once"
 
 Within your tools (and soon within your prompts and resources too),
-you can perform a side-effect that can _only_ be tried once using
-`at_most_once` (if you can perform the side-effect more than once
-using safely then always prefer `at_least_once`). Here's an example of
-`at_most_once`:
+you can perform a side-effect that can _only_ be **tried** once using
+`at_most_once` (if you can safely use `at_least_once` always prefer
+it). Here's an example of `at_most_once`:
 
 ```python
 from reboot.aio.workflows import at_least_once
