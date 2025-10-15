@@ -31,6 +31,7 @@ from reboot.mcp.event_store import (
     replace_whole_floats_with_ints,
 )
 from reboot.protobuf import as_dict, from_model
+from rebootdev.aio.backoff import Backoff
 
 logger = get_logger(__name__)
 
@@ -233,16 +234,33 @@ class SessionServicer(Session.Servicer):
                             related_request_id=related_request_id,
                         )
 
-                        async def is_visual_studio_code():
-                            response = await self.ref().per_workflow(
-                                "Check if client is Visual Studio Code",
-                            ).get(context)
-                            assert response.HasField("client_info")
-                            if response.HasField("client_info"):
-                                return response.client_info.name == "Visual Studio Code"
-                            return False
+                        async def check_is_vscode():
+                            backoff = Backoff(max_backoff_seconds=2)
+                            while True:
+                                response = await self.ref().always().get(
+                                    context
+                                )
+                                if not response.HasField("client_info"):
+                                    await backoff()
+                                    continue
+                                # Technically `name` is required but
+                                # at least the MCP SDK doesn't
+                                # validate it via Pydantic, but Visual
+                                # Studio Code always seems to include
+                                # its name, so if we don't have a name
+                                # it is not Visual Studio Code.
+                                if response.client_info.HasField("name"):
+                                    return response.client_info.name == "Visual Studio Code"
+                                return False
 
-                        if await is_visual_studio_code():
+                        is_vscode = await at_least_once(
+                            "Check if client is Visual Studio Code",
+                            context,
+                            check_is_vscode,
+                            type=bool,
+                        )
+
+                        if is_vscode:
                             # For Visual Studio Code, also store the
                             # _outgoing_ message, i.e., event, on the
                             # aggregated stream.
