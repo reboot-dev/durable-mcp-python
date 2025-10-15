@@ -1,48 +1,96 @@
 import asyncio
+import mcp.types as types
+from typing import Any, Dict, List
+from dataclasses import dataclass
+
 from reboot.mcp.server import DurableContext, DurableMCP
 from reboot.std.collections.v1.sorted_map import SortedMap
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, ConfigDict, ValidationError
 
-# `DurableMCP` server which will handle HTTP requests at path "/mcp".
-mcp = DurableMCP(path="/mcp", log_level="DEBUG")
-
-# class SortedMapPreference(BaseModel):
-#     """Preference for storing results in a `SortedMap`."""
-
-#     store_in_sorted_map: bool = Field(
-#         default=True,
-#         description="Would you like to store the result in a SortedMap.",
-#     )
+MIME_TYPE = "text/html+skybridge"
 
 
-@mcp.tool()
-async def addNumbersAndInsertIntoSortedMap(
-    a: int, b: int, context: DurableContext
-) -> int:
-    """Add two numbers and also store result in `SortedMap`."""
-    # await context.report_progress(0.1)
-    result = a + b
+@dataclass(frozen=True)
+class CounterWidget:
+    identifier: str
+    title: str
+    template_uri: str
+    invoking: str
+    invoked: str
+    html: str
+    response_text: str
 
-    # elicit_result = await context.elicit(
-    #     message=
-    #     f"Computed {a} + {b}, result is {result}. Should I add this your records?",
-    #     schema=SortedMapPreference
-    # )
-    # print("elicit_result:")
-    # print(elicit_result)
 
-    # if elicit_result.action == "accept" and elicit_result.data:
-    #     if not elicit_result.data.store_in_sorted_map:
-    #         await context.report_progress(1.0)
-    #         return result
+WIDGET = CounterWidget(
+    identifier="counter",
+    title="Keep a count with a counter widget",
+    template_uri="ui://widget/counter.html",
+    invoking="Start counting",
+    invoked="Your counter is ready",
+    html=(
+        "<div id=\"counter-root\"></div>\n"
+        "<link rel=\"stylesheet\" href=\"https://persistent.oaistatic.com/"
+        "ecosystem-built-assets/solar-system-0038.css\">\n"
+        "<script type=\"module\" src=\"https://persistent.oaistatic.com/"
+        "ecosystem-built-assets/solar-system-0038.js\"></script>"
+    ),
+    response_text="Your counter is ready",
+)
 
-    await SortedMap.ref("adds").Insert(
-        context,
-        entries={f"{a} + {b}": f"{result}".encode()},
+
+def _embedded_widget_resource(widget: CounterWidget) -> types.EmbeddedResource:
+    return types.EmbeddedResource(
+        type="resource",
+        resource=types.TextResourceContents(
+            uri=widget.template_uri,
+            mimeType=MIME_TYPE,
+            text=widget.html,
+            title=widget.title,
+        ),
     )
 
-    # await context.report_progress(1.0)
-    return result
+
+async def _call_tool_request(req: types.CallToolRequest) -> types.ServerResult:
+    arguments = req.params.arguments or {}
+    try:
+        model_validate(arguments)
+    except ValidationError as exc:
+        return types.ServerResult(
+            types.CallToolResult(
+                content=[
+                    types.TextContent(
+                        type="text",
+                        text=f"Input validation error: {exc.errors()}",
+                    )
+                ],
+                isError=True,
+            )
+        )
+
+    widget_resource = _embedded_widget_resource(WIDGET)
+    meta: Dict[str, Any] = {
+        "openai.com/widget": widget_resource.model_dump(mode="json"),
+        "openai/outputTemplate": WIDGET.template_uri,
+        "openai/toolInvocation/invoking": WIDGET.invoking,
+        "openai/toolInvocation/invoked": WIDGET.invoked,
+        "openai/widgetAccessible": True,
+        "openai/resultCanProduceWidget": True,
+    }
+
+    return types.ServerResult(
+        types.CallToolResult(
+            content=[
+                types.TextContent(
+                    type="text",
+                    text=widget.response_text,
+                )
+            ],
+            _meta=meta,
+        )
+    )
+
+
+mcp = DurableMCP(path="/mcp", log_level="DEBUG")
 
 
 async def main():
