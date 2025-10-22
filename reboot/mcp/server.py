@@ -605,7 +605,7 @@ def _streamable_http_app(
             title=resource.title,
             description=resource.description,
             mime_type=resource.mime_type,
-        )(resource.fn)
+        )(_wrap_resource(resource.fn))
 
     for prompt in prompts:
         mcp.prompt(
@@ -637,6 +637,128 @@ def _streamable_http_app(
             ),
         ],
     )
+
+
+def _wrap_resource(fn: mcp.types.AnyFunction) -> mcp.types.AnyFunction:
+    """Wrap a resource function to inject DurableContext.
+
+    Resources don't receive fastmcp.Context (unlike tools), so we only:
+    1. Identify DurableContext parameters in the function signature
+    2. Get WorkflowContext from the context variable
+    3. Convert it to DurableContext
+    4. Inject it when calling the function
+    5. Apply effect validation
+
+    Resources do NOT get notification methods (report_progress, log, elicit)
+    since there's no fastmcp.Context.session available.
+    """
+    signature = inspect.signature(fn)
+
+    wrapper_parameters = []
+    context_parameter_names = []
+
+    for parameter_name, parameter in signature.parameters.items():
+        annotation = parameter.annotation
+        if (
+            isinstance(annotation, type) and
+            issubclass(annotation, fastmcp.Context)
+        ):
+            raise TypeError(
+                "`DurableMCP` only injects `DurableContext` not `Context`")
+        if (
+            isinstance(annotation, type) and
+            issubclass(annotation, DurableContext)
+        ):
+            context_parameter_names.append(parameter_name)
+        else:
+            wrapper_parameters.append(parameter)
+
+    wrapper_signature = signature.replace(parameters=wrapper_parameters)
+
+    async def wrapper(
+        context: WorkflowContext,
+        *args,
+        **kwargs,
+    ):
+        # To account for the lack of "intersection" types in
+        # Python (which is actively being worked on), we instead
+        # create a new dynamic `DurableContext` instance that
+        # inherits from the instance of `WorkflowContext` that we
+        # already have.
+        context.__class__ = DurableContext
+
+        context = cast(DurableContext, context)
+
+        # Inject context into function arguments BEFORE binding
+        for context_parameter_name in context_parameter_names:
+            kwargs[context_parameter_name] = context
+
+        # Bind with the original signature that includes context
+        bound = signature.bind(*args, **kwargs)
+        bound.apply_defaults()
+
+        try:
+            if fastmcp.tools.base._is_async_callable(fn):
+                return await fn(**dict(bound.arguments))
+
+            return fn(**dict(bound.arguments))
+        except:
+            import traceback
+            traceback.print_exc()
+            raise
+
+    async def wrapper_validating_effects(
+        *args,
+        **kwargs,
+    ):
+        context: WorkflowContext | None = _context.get()
+
+        assert context is not None
+
+        # Checkpoint the context since it is the `IdempotencyManager`.
+        checkpoint = context.checkpoint()
+
+        result = await wrapper(context, *args, **kwargs)
+
+        if context._effect_validation == EffectValidation.DISABLED:
+            return result
+
+        # Effect validation is enabled.
+        logger.info(
+            f"Re-running resource '{fn.__name__}' "
+            f"to validate effects. See {DOCS_BASE_URL}/develop/side_effects "
+            "for more information."
+        )
+
+        # Restore the context to the checkpoint we took above so we
+        # can re-execute `callable` as though it is being retried from
+        # scratch.
+        context.restore(checkpoint)
+
+        # TODO: check if `result` is different (we don't do this for
+        # other effect validation so we're also not doing it now).
+
+        return await wrapper(context, *args, **kwargs)
+
+    setattr(wrapper_validating_effects, "__signature__", wrapper_signature)
+    wrapper_validating_effects.__name__ = fn.__name__
+    wrapper_validating_effects.__doc__ = fn.__doc__
+
+    # Resources require __annotations__ to be updated, unlike tools. This is
+    # because resources go through fastmcp.ResourceTemplate.from_function()
+    # which uses pydantic's TypeAdapter for schema introspection. TypeAdapter
+    # examines __annotations__ to validate parameter types. Tools use a
+    # different registration path that relies only on __signature__, so they
+    # don't need __annotations__ updated.
+    wrapper_validating_effects.__annotations__ = {
+        param.name: param.annotation
+        for param in wrapper_signature.parameters.values()
+        if param.annotation != inspect.Parameter.empty
+    }
+    if wrapper_signature.return_annotation != inspect.Signature.empty:
+        wrapper_validating_effects.__annotations__['return'] = wrapper_signature.return_annotation
+
+    return wrapper_validating_effects
 
 
 def _wrap_tool(fn: mcp.types.AnyFunction) -> mcp.types.AnyFunction:
