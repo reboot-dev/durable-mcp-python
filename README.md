@@ -268,13 +268,12 @@ you automatically.
 - [ ] `yapf`
 - [ ] Pydantic `state` for each session
 
-
 ### Contributing
 
 First grab all dependencies:
 
 ```console
-uv sync
+uv sync --extra dev
 ```
 
 Activate the `venv`:
