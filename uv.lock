@@ -1,5 +1,5 @@
 version = 1
-revision = 2
+revision = 3
 requires-python = ">=3.12.11"
 
 [[package]]
@@ -284,11 +284,12 @@ wheels = [
 
 [[package]]
 name = "durable-mcp"
-version = "0.3.1"
+version = "0.5.0"
 source = { editable = "." }
 dependencies = [
     { name = "mcp" },
     { name = "reboot" },
+    { name = "uuid7-standard" },
 ]
 
 [package.optional-dependencies]
@@ -306,9 +307,10 @@ requires-dist = [
     { name = "mcp", specifier = "==1.13.1" },
     { name = "mypy", marker = "extra == 'dev'", specifier = "==1.2.0" },
     { name = "pytest", marker = "extra == 'dev'", specifier = "==8.4.1" },
-    { name = "reboot", specifier = "==0.38.2" },
+    { name = "reboot", specifier = "==0.38.4" },
     { name = "twine", marker = "extra == 'dev'" },
     { name = "types-protobuf", marker = "extra == 'dev'", specifier = ">=4.24.0.20240129" },
+    { name = "uuid7-standard", specifier = ">=1.1.0" },
 ]
 provides-extras = ["dev"]
 
@@ -1410,7 +1412,7 @@ wheels = [
 
 [[package]]
 name = "reboot"
-version = "0.38.2"
+version = "0.38.4"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "aiofiles" },
@@ -1454,9 +1456,10 @@ dependencies = [
     { name = "websockets" },
 ]
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/a2/e4/87dd4850fd17f09771372dd9db2266606859bf2141ec6604c7ee01eaf06d/reboot-0.38.2-py3-none-macosx_13_0_arm64.whl", hash = "sha256:e13a0393ed97309defad0b05d58eba7d56efb6105a3259a7c9713467f672ed37", size = 18281808, upload-time = "2025-09-30T06:43:35.328Z" },
-    { url = "https://files.pythonhosted.org/packages/5d/42/b5dc736c0830a2f53c4c8c89877d56ebed207e14e5ad94b1415c471925b2/reboot-0.38.2-py3-none-manylinux_2_31_aarch64.whl", hash = "sha256:56c9035c32fff37ac8232b3fdd2d4e6545390226572db78671734eb7da45e399", size = 22051338, upload-time = "2025-09-30T06:25:38.064Z" },
-    { url = "https://files.pythonhosted.org/packages/28/dc/c6825848feccf8006a9e151fbebcf609a468d0c217e759b9cd5630be8990/reboot-0.38.2-py3-none-manylinux_2_31_x86_64.whl", hash = "sha256:f44fac874d98b7949d74892644ce9abc6ef3bc5b78589e7ed434b119082467e1", size = 22181090, upload-time = "2025-09-30T06:24:48.405Z" },
+    { url = "https://files.pythonhosted.org/packages/12/04/231a289a123e67d2c6a933e7e61f7477a7e85d93170696eea80ccad07eb0/reboot-0.38.4-py3-none-macosx_13_0_arm64.whl", hash = "sha256:1ef0bfe44e92de5b675391366755b7ab35abd12ddb2ee2514afe85de91d433ff", size = 18167100, upload-time = "2025-10-21T00:10:39.761Z" },
+    { url = "https://files.pythonhosted.org/packages/b3/f3/17303fd995e4af5bea9d20b54900eb6e996620edea1bcaac6bfcd9ad9ed7/reboot-0.38.4-py3-none-macosx_13_0_x86_64.whl", hash = "sha256:80c29ccba4d1c58138a4a808b515d0de6a9987f1f2967eca89da7f451e62cafb", size = 17898553, upload-time = "2025-10-21T01:15:30.703Z" },
+    { url = "https://files.pythonhosted.org/packages/e3/0c/275a62f2606d06e7102618c160002658baa983801eb87433aa26581fa602/reboot-0.38.4-py3-none-manylinux_2_35_aarch64.whl", hash = "sha256:4e6538c27172d25bb5c053a1a802da7df7014e62edeefbfa036af5ee2a8287f5", size = 21913909, upload-time = "2025-10-20T23:56:40.392Z" },
+    { url = "https://files.pythonhosted.org/packages/84/7b/6728d6cafe7595b26f736c05405ae404a42a532e12ae9083f17f2ccec9b8/reboot-0.38.4-py3-none-manylinux_2_35_x86_64.whl", hash = "sha256:add5b7a4396eb6e47916f0ee87846c699d47c95322083f8070dfc06498f04d24", size = 22034809, upload-time = "2025-10-20T23:56:29.809Z" },
 ]
 
 [[package]]
