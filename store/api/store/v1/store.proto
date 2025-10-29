@@ -1,0 +1,303 @@
+syntax = "proto3";
+
+package store.v1;
+
+import "rbt/v1alpha1/options.proto";
+
+// Cart Service - Manages shopping cart state
+service CartMethods {
+  rpc AddItem(AddItemRequest) returns (AddItemResponse) {
+    option (rbt.v1alpha1.method).writer = {};
+  }
+  rpc GetItems(GetItemsRequest) returns (GetItemsResponse) {
+    option (rbt.v1alpha1.method).reader = {};
+  }
+  rpc UpdateItemQuantity(UpdateItemQuantityRequest) returns (UpdateItemQuantityResponse) {
+    option (rbt.v1alpha1.method).writer = {};
+  }
+  rpc RemoveItem(RemoveItemRequest) returns (RemoveItemResponse) {
+    option (rbt.v1alpha1.method).writer = {};
+  }
+  rpc EmptyCart(EmptyCartRequest) returns (EmptyCartResponse) {
+    option (rbt.v1alpha1.method).writer = {};
+  }
+}
+
+message Cart {
+  option (rbt.v1alpha1.state) = {};
+
+  repeated CartItem items = 1;
+  string user_id = 2;
+}
+
+message CartItem {
+  string product_id = 1;
+  int32 quantity = 2;
+  int64 added_at = 3;
+}
+
+message AddItemRequest {
+  string user_id = 1;
+  CartItem item = 2;
+}
+
+message AddItemResponse {}
+
+message GetItemsRequest {
+  string user_id = 1;
+}
+
+message GetItemsResponse {
+  repeated CartItem items = 1;
+}
+
+message UpdateItemQuantityRequest {
+  string user_id = 1;
+  string product_id = 2;
+  int32 quantity = 3;
+}
+
+message UpdateItemQuantityResponse {}
+
+message RemoveItemRequest {
+  string user_id = 1;
+  string product_id = 2;
+}
+
+message RemoveItemResponse {}
+
+message EmptyCartRequest {
+  string user_id = 1;
+}
+
+message EmptyCartResponse {}
+
+// Product Catalog Service - Manages product inventory
+service ProductCatalogMethods {
+  rpc ListProducts(ListProductsRequest) returns (ListProductsResponse) {
+    option (rbt.v1alpha1.method).reader = {};
+  }
+  rpc GetProduct(GetProductRequest) returns (Product) {
+    option (rbt.v1alpha1.method).reader = {};
+  }
+  rpc SearchProducts(SearchProductsRequest) returns (SearchProductsResponse) {
+    option (rbt.v1alpha1.method).reader = {};
+  }
+  rpc AddProduct(AddProductRequest) returns (AddProductResponse) {
+    option (rbt.v1alpha1.method).writer = {};
+  }
+  rpc UpdateProduct(UpdateProductRequest) returns (UpdateProductResponse) {
+    option (rbt.v1alpha1.method).writer = {};
+  }
+}
+
+message ProductCatalog {
+  option (rbt.v1alpha1.state) = {};
+
+  repeated Product products = 1;
+}
+
+message Product {
+  string id = 1;
+  string name = 2;
+  string description = 3;
+  string picture = 4;
+  uint32 price_cents = 5;
+  repeated string categories = 6;
+  int32 stock_quantity = 7;
+}
+
+message ListProductsRequest {
+  string catalog_id = 1;
+}
+
+message ListProductsResponse {
+  repeated Product products = 1;
+}
+
+message GetProductRequest {
+  string catalog_id = 1;
+  string product_id = 2;
+}
+
+message SearchProductsRequest {
+  string catalog_id = 1;
+  string query = 2;
+}
+
+message SearchProductsResponse {
+  repeated Product products = 1;
+}
+
+message AddProductRequest {
+  string catalog_id = 1;
+  Product product = 2;
+}
+
+message AddProductResponse {}
+
+message UpdateProductRequest {
+  string catalog_id = 1;
+  Product product = 2;
+}
+
+message UpdateProductResponse {}
+
+// Shipping Service - Handles shipping quotes and order preparation
+service ShippingMethods {
+  rpc GetQuote(GetQuoteRequest) returns (GetQuoteResponse) {
+    option (rbt.v1alpha1.method).reader = {};
+  }
+  rpc ShipOrder(ShipOrderRequest) returns (ShipOrderResponse) {
+    option (rbt.v1alpha1.method).writer = {};
+  }
+}
+
+message Shipping {
+  option (rbt.v1alpha1.state) = {};
+
+  repeated ShippingQuote quotes = 1;
+  repeated Shipment shipments = 2;
+}
+
+message ShippingQuote {
+  string id = 1;
+  uint32 cost_cents = 2;
+  string carrier = 3;
+  int32 estimated_days = 4;
+}
+
+message Shipment {
+  string tracking_number = 1;
+  string carrier = 2;
+  string status = 3;
+  Address address = 4;
+}
+
+message GetQuoteRequest {
+  string shipping_id = 1;
+  Address address = 2;
+  repeated CartItem items = 3;
+}
+
+message GetQuoteResponse {
+  repeated ShippingQuote quotes = 1;
+}
+
+message ShipOrderRequest {
+  string shipping_id = 1;
+  string order_id = 2;
+  Address address = 3;
+  string quote_id = 4;
+}
+
+message ShipOrderResponse {
+  string tracking_number = 1;
+}
+
+message Address {
+  string street_address = 1;
+  string city = 2;
+  string state = 3;
+  string country = 4;
+  string zip_code = 5;
+}
+
+// Order Service - Manages order state and history
+service OrderMethods {
+  rpc GetOrder(GetOrderRequest) returns (Order) {
+    option (rbt.v1alpha1.method).reader = {};
+  }
+  rpc ListOrders(ListOrdersRequest) returns (ListOrdersResponse) {
+    option (rbt.v1alpha1.method).reader = {};
+  }
+  rpc UpdateOrderStatus(UpdateOrderStatusRequest) returns (UpdateOrderStatusResponse) {
+    option (rbt.v1alpha1.method).writer = {};
+  }
+}
+
+message Order {
+  option (rbt.v1alpha1.state) = {};
+
+  string order_id = 1;
+  string user_id = 2;
+  repeated OrderItem items = 3;
+  uint32 shipping_cost_cents = 4;
+  Address shipping_address = 5;
+  string status = 6;
+  int64 created_at = 7;
+  string tracking_number = 8;
+}
+
+message OrderItem {
+  CartItem item = 1;
+  uint32 cost_cents = 2;
+}
+
+message GetOrderRequest {
+  string order_id = 1;
+}
+
+message ListOrdersRequest {
+  string user_id = 1;
+}
+
+message ListOrdersResponse {
+  repeated Order orders = 1;
+}
+
+message UpdateOrderStatusRequest {
+  string order_id = 1;
+  string status = 2;
+}
+
+message UpdateOrderStatusResponse {}
+
+// Checkout Service - Handles order placement and payment
+service CheckoutMethods {
+  rpc PlaceOrder(PlaceOrderRequest) returns (PlaceOrderResponse) {
+    option (rbt.v1alpha1.method).writer = {};
+  }
+  rpc GetCheckoutSession(GetCheckoutSessionRequest) returns (CheckoutSession) {
+    option (rbt.v1alpha1.method).reader = {};
+  }
+}
+
+message Checkout {
+  option (rbt.v1alpha1.state) = {};
+
+  repeated Order completed_orders = 1;
+}
+
+message CheckoutSession {
+  string session_id = 1;
+  string user_id = 2;
+  repeated CartItem items = 3;
+  uint32 subtotal_cents = 4;
+  uint32 shipping_cost_cents = 5;
+  uint32 total_cents = 6;
+}
+
+message PlaceOrderRequest {
+  string checkout_id = 1;
+  string user_id = 2;
+  Address shipping_address = 3;
+  CreditCardInfo payment = 4;
+  string shipping_quote_id = 5;
+}
+
+message PlaceOrderResponse {
+  Order order = 1;
+}
+
+message GetCheckoutSessionRequest {
+  string checkout_id = 1;
+}
+
+message CreditCardInfo {
+  string number = 1;
+  int32 cvv = 2;
+  int32 expiration_year = 3;
+  int32 expiration_month = 4;
+}
+

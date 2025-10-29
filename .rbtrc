@@ -1,15 +1,16 @@
 # Find '.proto' files in 'api/'.
 
-generate api/
+generate store/api/
 
 # Tell `rbt` where to output its generated files.
 
 # The paths are different for backend and frontend code.
 
-generate --python=api/
-generate --react=reboot/inspect/api
+
 
 # DELETE THIS
+generate --python=store/api/
+generate --react=store/web/api
 
 dev run --python --application=main.py
 dev run --watch=**/\*.py --watch=different**/\*.py

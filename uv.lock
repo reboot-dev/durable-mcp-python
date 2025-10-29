@@ -288,6 +288,7 @@ version = "0.4.1"
 source = { editable = "." }
 dependencies = [
     { name = "mcp" },
+    { name = "mcp-ui-server" },
     { name = "reboot" },
     { name = "uuid7-standard" },
 ]
@@ -305,6 +306,7 @@ dev = [
 requires-dist = [
     { name = "build", marker = "extra == 'dev'" },
     { name = "mcp", specifier = "==1.13.1" },
+    { name = "mcp-ui-server", specifier = ">=0.1.0" },
     { name = "mypy", marker = "extra == 'dev'", specifier = "==1.2.0" },
     { name = "pytest", marker = "extra == 'dev'", specifier = "==8.4.1" },
     { name = "reboot", specifier = "==0.38.2" },
@@ -807,6 +809,20 @@ dependencies = [
 sdist = { url = "https://files.pythonhosted.org/packages/66/3c/82c400c2d50afdac4fbefb5b4031fd327e2ad1f23ccef8eee13c5909aa48/mcp-1.13.1.tar.gz", hash = "sha256:165306a8fd7991dc80334edd2de07798175a56461043b7ae907b279794a834c5", size = 438198, upload-time = "2025-08-22T09:22:16.061Z" }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/19/3f/d085c7f49ade6d273b185d61ec9405e672b6433f710ea64a90135a8dd445/mcp-1.13.1-py3-none-any.whl", hash = "sha256:c314e7c8bd477a23ba3ef472ee5a32880316c42d03e06dcfa31a1cc7a73b65df", size = 161494, upload-time = "2025-08-22T09:22:14.705Z" },
+]
+
+[[package]]
+name = "mcp-ui-server"
+version = "0.1.0"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "mcp" },
+    { name = "pydantic" },
+    { name = "typing-extensions" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/ad/76/bec82bae33bdd1f726001ccec19d0928ee316f4bd245ac0ee90698eab254/mcp_ui_server-0.1.0.tar.gz", hash = "sha256:280ca8c44551bde2c3f246d8e6c84b5e68fce44f3114ed87f7c2960fb8ea5650", size = 46885, upload-time = "2025-09-26T15:27:21.319Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/69/15/465a293bf5dba0908735e19889353518dd9a305549aaaa4252ee5ae826ab/mcp_ui_server-0.1.0-py3-none-any.whl", hash = "sha256:9b66958117df9368295878e1a474868df82eb143b2f2a1ae94ce064ccac8fe95", size = 9142, upload-time = "2025-09-26T15:27:19.942Z" },
 ]
 
 [[package]]
