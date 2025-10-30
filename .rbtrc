@@ -15,3 +15,5 @@ generate --react=store/web/api
 dev run --python --application=main.py
 dev run --watch=**/\*.py --watch=different**/\*.py
 dev run --name=my-mcp
+
+dev run --no-chaos

@@ -25,6 +25,7 @@ from mcp.shared.message import ServerMessageMetadata
 from rbt.mcp.v1.session_rbt import Session, Sessions
 from rbt.v1alpha1.errors_pb2 import StateNotConstructed
 from reboot.aio.applications import Application
+from rebootdev.aio.servicers import Servicer
 from reboot.aio.contexts import EffectValidation, WorkflowContext
 from reboot.aio.external import ExternalContext, InitializeContext
 from reboot.aio.types import StateRef
@@ -568,17 +569,34 @@ class DurableMCP:
             )
         )
 
-    def application(self) -> Application:
+    def application(
+        self,
+        *,
+        servicers: list[type[Servicer]] | None = None,
+        initialize: Callable[[InitializeContext], Any] | None = None,
+    ) -> Application:
         """
         Returns a Reboot `Application` for running the MCP tools,
         resources, prompts, etc that were defined.
+
+        Args:
+            servicers: Optional list of additional servicers to register
+            initialize: Optional initialization function to run on startup
         """
 
-        async def initialize(context: InitializeContext):
+        async def default_initialize(context: InitializeContext):
             await Sessions.Create(context, SORTED_MAP_SESSIONS_INDEX)
+            if initialize is not None:
+                result = initialize(context)
+                if inspect.iscoroutine(result):
+                    await result
+
+        all_servicers = self.servicers()
+        if servicers:
+            all_servicers.extend(servicers)
 
         application = Application(
-            servicers=self.servicers(), initialize=initialize
+            servicers=all_servicers, initialize=default_initialize
         )
 
         # Mount the mcp-sequence diagram inspect dashboard.

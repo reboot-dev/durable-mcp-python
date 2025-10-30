@@ -4,8 +4,24 @@ package store.v1;
 
 import "rbt/v1alpha1/options.proto";
 
-// Cart Service - Manages shopping cart state
+////////////////////////////////////////////////////////////////////////
+
+message Cart {
+  option (rbt.v1alpha1.state) = {};
+
+  repeated CartItem items = 1;
+}
+
+////////////////////////////////////////////////////////////////////////
+
 service CartMethods {
+  rpc Create(CreateCartRequest) returns (CreateCartResponse) {
+    option (rbt.v1alpha1.method) = {
+      writer: {
+        constructor: {},
+      },
+    };
+  }
   rpc AddItem(AddItemRequest) returns (AddItemResponse) {
     option (rbt.v1alpha1.method).writer = {};
   }
@@ -23,36 +39,35 @@ service CartMethods {
   }
 }
 
-message Cart {
-  option (rbt.v1alpha1.state) = {};
-
-  repeated CartItem items = 1;
-  string user_id = 2;
-}
+////////////////////////////////////////////////////////////////////////
 
 message CartItem {
   string product_id = 1;
   int32 quantity = 2;
   int64 added_at = 3;
+  string name = 4;
+  uint32 price_cents = 5;
+  string picture = 6;
 }
 
+message CreateCartRequest {}
+
+message CreateCartResponse {}
+
 message AddItemRequest {
-  string user_id = 1;
   CartItem item = 2;
+  string catalog_id = 3;
 }
 
 message AddItemResponse {}
 
-message GetItemsRequest {
-  string user_id = 1;
-}
+message GetItemsRequest {}
 
 message GetItemsResponse {
   repeated CartItem items = 1;
 }
 
 message UpdateItemQuantityRequest {
-  string user_id = 1;
   string product_id = 2;
   int32 quantity = 3;
 }
@@ -60,19 +75,26 @@ message UpdateItemQuantityRequest {
 message UpdateItemQuantityResponse {}
 
 message RemoveItemRequest {
-  string user_id = 1;
   string product_id = 2;
 }
 
 message RemoveItemResponse {}
 
 message EmptyCartRequest {
-  string user_id = 1;
 }
 
 message EmptyCartResponse {}
 
-// Product Catalog Service - Manages product inventory
+////////////////////////////////////////////////////////////////////////
+
+message ProductCatalog {
+  option (rbt.v1alpha1.state) = {};
+
+  repeated Product products = 1;
+}
+
+////////////////////////////////////////////////////////////////////////
+
 service ProductCatalogMethods {
   rpc ListProducts(ListProductsRequest) returns (ListProductsResponse) {
     option (rbt.v1alpha1.method).reader = {};
@@ -91,11 +113,7 @@ service ProductCatalogMethods {
   }
 }
 
-message ProductCatalog {
-  option (rbt.v1alpha1.state) = {};
-
-  repeated Product products = 1;
-}
+////////////////////////////////////////////////////////////////////////
 
 message Product {
   string id = 1;
@@ -143,7 +161,17 @@ message UpdateProductRequest {
 
 message UpdateProductResponse {}
 
-// Shipping Service - Handles shipping quotes and order preparation
+////////////////////////////////////////////////////////////////////////
+
+message Shipping {
+  option (rbt.v1alpha1.state) = {};
+
+  repeated ShippingQuote quotes = 1;
+  repeated Shipment shipments = 2;
+}
+
+////////////////////////////////////////////////////////////////////////
+
 service ShippingMethods {
   rpc GetQuote(GetQuoteRequest) returns (GetQuoteResponse) {
     option (rbt.v1alpha1.method).reader = {};
@@ -153,12 +181,7 @@ service ShippingMethods {
   }
 }
 
-message Shipping {
-  option (rbt.v1alpha1.state) = {};
-
-  repeated ShippingQuote quotes = 1;
-  repeated Shipment shipments = 2;
-}
+////////////////////////////////////////////////////////////////////////
 
 message ShippingQuote {
   string id = 1;
@@ -203,7 +226,22 @@ message Address {
   string zip_code = 5;
 }
 
-// Order Service - Manages order state and history
+////////////////////////////////////////////////////////////////////////
+
+message Order {
+  option (rbt.v1alpha1.state) = {};
+
+  string order_id = 1;
+  repeated OrderItem items = 3;
+  uint32 shipping_cost_cents = 4;
+  Address shipping_address = 5;
+  string status = 6;
+  int64 created_at = 7;
+  string tracking_number = 8;
+}
+
+////////////////////////////////////////////////////////////////////////
+
 service OrderMethods {
   rpc GetOrder(GetOrderRequest) returns (Order) {
     option (rbt.v1alpha1.method).reader = {};
@@ -216,18 +254,7 @@ service OrderMethods {
   }
 }
 
-message Order {
-  option (rbt.v1alpha1.state) = {};
-
-  string order_id = 1;
-  string user_id = 2;
-  repeated OrderItem items = 3;
-  uint32 shipping_cost_cents = 4;
-  Address shipping_address = 5;
-  string status = 6;
-  int64 created_at = 7;
-  string tracking_number = 8;
-}
+////////////////////////////////////////////////////////////////////////
 
 message OrderItem {
   CartItem item = 1;
@@ -239,7 +266,6 @@ message GetOrderRequest {
 }
 
 message ListOrdersRequest {
-  string user_id = 1;
 }
 
 message ListOrdersResponse {
@@ -253,7 +279,17 @@ message UpdateOrderStatusRequest {
 
 message UpdateOrderStatusResponse {}
 
-// Checkout Service - Handles order placement and payment
+////////////////////////////////////////////////////////////////////////
+
+
+message Checkout {
+  option (rbt.v1alpha1.state) = {};
+
+  repeated Order completed_orders = 1;
+}
+
+////////////////////////////////////////////////////////////////////////
+
 service CheckoutMethods {
   rpc PlaceOrder(PlaceOrderRequest) returns (PlaceOrderResponse) {
     option (rbt.v1alpha1.method).writer = {};
@@ -263,15 +299,10 @@ service CheckoutMethods {
   }
 }
 
-message Checkout {
-  option (rbt.v1alpha1.state) = {};
-
-  repeated Order completed_orders = 1;
-}
+////////////////////////////////////////////////////////////////////////
 
 message CheckoutSession {
   string session_id = 1;
-  string user_id = 2;
   repeated CartItem items = 3;
   uint32 subtotal_cents = 4;
   uint32 shipping_cost_cents = 5;
@@ -280,7 +311,6 @@ message CheckoutSession {
 
 message PlaceOrderRequest {
   string checkout_id = 1;
-  string user_id = 2;
   Address shipping_address = 3;
   CreditCardInfo payment = 4;
   string shipping_quote_id = 5;

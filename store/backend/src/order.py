@@ -5,6 +5,7 @@ from reboot.aio.contexts import ReaderContext, WriterContext
 
 
 class OrderServicer(Order.Servicer):
+
     def authorizer(self):
         return allow()
 
@@ -16,7 +17,6 @@ class OrderServicer(Order.Servicer):
         # Return the current state as the order
         return store_pb2.Order(
             order_id=self.state.order_id,
-            user_id=self.state.user_id,
             items=self.state.items,
             shipping_cost=self.state.shipping_cost,
             shipping_address=self.state.shipping_address,

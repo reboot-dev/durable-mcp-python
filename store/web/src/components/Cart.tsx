@@ -1,123 +1,86 @@
-import { useEffect, useState } from 'react';
-import { useSearchParams } from 'react-router-dom';
-
-interface CartItem {
-  productId: string;
-  quantity: number;
-  addedAt: number;
-  name?: string;
-  priceCents?: number;
-  picture?: string;
-}
+import { useCart } from "../../api/store/v1/store_rbt_react";
 
 const Cart = () => {
-  const [searchParams] = useSearchParams();
-  const userId = searchParams.get('userId') || 'demo-user';
-  const [cartItems, setCartItems] = useState<CartItem[]>([]);
-  const [loading, setLoading] = useState(true);
+  const { useGetItems, removeItem, updateItemQuantity } = useCart({
+    id: "default-cart",
+  });
 
-  useEffect(() => {
-    // Mock cart items for now - in production, this would fetch from your backend
-    const mockCartItems: CartItem[] = [
-      {
-        productId: 'shirt-001',
-        quantity: 2,
-        addedAt: Date.now(),
-        name: 'Classic Blue Shirt',
-        priceCents: 2999,
-        picture: 'https://pngimg.com/uploads/tshirt/tshirt_PNG5437.png'
-      },
-      {
-        productId: 'pants-001',
-        quantity: 1,
-        addedAt: Date.now(),
-        name: 'Denim Jeans',
-        priceCents: 4999,
-        picture: 'https://pngimg.com/uploads/jeans/jeans_PNG5763.png'
-      }
-    ];
+  const { response } = useGetItems();
+  console.log(response);
 
-    setCartItems(mockCartItems);
-    setLoading(false);
-  }, [userId]);
+  if (response === undefined) return <>Loading...</>;
 
   const formatPrice = (priceCents?: number) => {
-    if (!priceCents) return '$0.00';
+    if (!priceCents) return "$0.00";
     const dollars = priceCents / 100;
     return `$${dollars.toFixed(2)}`;
   };
 
   const calculateTotal = () => {
-    return cartItems.reduce((total, item) => {
-      if (!item.priceCents) return total;
-      const itemPriceCents = item.priceCents * item.quantity;
-      return total + itemPriceCents;
-    }, 0) / 100;
+    return (
+      response.items.reduce((total, item) => {
+        if (!item.priceCents) return total;
+        const itemPriceCents = item.priceCents * item.quantity;
+        return total + itemPriceCents;
+      }, 0) / 100
+    );
   };
 
   const updateQuantity = (productId: string, newQuantity: number) => {
-    if (newQuantity <= 0) {
-      removeItem(productId);
-      return;
-    }
-
-    setCartItems(items =>
-      items.map(item =>
-        item.productId === productId ? { ...item, quantity: newQuantity } : item
-      )
-    );
-
-    // Send intent to update quantity
+    updateItemQuantity({ productId, quantity: newQuantity });
     if (window.parent) {
-      window.parent.postMessage({
-        type: "prompt",
-        payload: {
-          prompt: `Update quantity of product ${productId} to ${newQuantity}`,
+      window.parent.postMessage(
+        {
+          type: "prompt",
+          payload: {
+            prompt: `Update quantity of product ${productId} to ${newQuantity}`,
+          },
         },
-      }, '*');
+        "*"
+      );
     }
   };
 
-  const removeItem = (productId: string) => {
-    setCartItems(items => items.filter(item => item.productId !== productId));
+  const removeCartItem = (productId: string) => {
+    removeItem({ productId });
 
-    // Send intent to remove item
     if (window.parent) {
-      window.parent.postMessage({
-        type: "prompt",
-        payload: {
-          prompt: `Remove product ${productId} from my cart`,
+      window.parent.postMessage(
+        {
+          type: "prompt",
+          payload: {
+            prompt: `Remove product ${productId} from my cart`,
+          },
         },
-      }, '*');
+        "*"
+      );
     }
   };
 
   const checkout = () => {
-    // Send checkout intent
     if (window.parent) {
-      window.parent.postMessage({
-        type: "prompt",
-        payload: {
-          prompt: `Checkout my cart`,
+      window.parent.postMessage(
+        {
+          type: "prompt",
+          payload: {
+            prompt: `Checkout process started.`,
+          },
         },
-      }, '*');
+        "*"
+      );
     }
   };
 
-  if (loading) {
-    return (
-      <div className="min-h-screen flex items-center justify-center bg-gray-50">
-        <div className="text-xs text-gray-600">Loading cart...</div>
-      </div>
-    );
-  }
-
-  if (cartItems.length === 0) {
+  if (response.items.length === 0) {
     return (
       <div className="min-h-screen flex items-center justify-center bg-gray-50">
         <div className="text-center">
-          <h2 className="text-sm font-bold text-gray-800 mb-1">Your cart is empty</h2>
-          <p className="text-xs text-gray-600">Add some products to get started</p>
+          <h2 className="text-sm font-bold text-gray-800 mb-1">
+            Your cart is empty
+          </h2>
+          <p className="text-xs text-gray-600">
+            Add some products to get started
+          </p>
         </div>
       </div>
     );
@@ -130,7 +93,7 @@ const Cart = () => {
 
         <div className="bg-white rounded shadow-sm">
           <div className="divide-y divide-gray-200">
-            {cartItems.map((item) => (
+            {response.items.map((item) => (
               <div key={item.productId} className="p-2 flex items-center gap-2">
                 {item.picture && (
                   <img
@@ -144,9 +107,11 @@ const Cart = () => {
                   <h3 className="text-xs font-semibold text-gray-900 line-clamp-1">
                     {item.name || item.productId}
                   </h3>
-                  <p className="text-xs text-gray-600">{formatPrice(item.priceCents)}</p>
+                  <p className="text-xs text-gray-600">
+                    {formatPrice(item.priceCents)}
+                  </p>
                   <button
-                    onClick={() => removeItem(item.productId)}
+                    onClick={() => removeCartItem(item.productId)}
                     className="text-xs text-red-600 hover:text-red-800 mt-0.5"
                   >
                     Remove
@@ -155,14 +120,20 @@ const Cart = () => {
 
                 <div className="flex items-center gap-1.5">
                   <button
-                    onClick={() => updateQuantity(item.productId, item.quantity - 1)}
+                    onClick={() =>
+                      updateQuantity(item.productId, item.quantity - 1)
+                    }
                     className="w-5 h-5 flex items-center justify-center rounded-full bg-gray-200 hover:bg-gray-300 text-gray-800 text-xs font-bold"
                   >
                     −
                   </button>
-                  <span className="w-5 text-center text-xs font-medium">{item.quantity}</span>
+                  <span className="w-5 text-center text-xs font-medium">
+                    {item.quantity}
+                  </span>
                   <button
-                    onClick={() => updateQuantity(item.productId, item.quantity + 1)}
+                    onClick={() =>
+                      updateQuantity(item.productId, item.quantity + 1)
+                    }
                     className="w-5 h-5 flex items-center justify-center rounded-full bg-gray-200 hover:bg-gray-300 text-gray-800 text-xs font-bold"
                   >
                     +
@@ -171,7 +142,11 @@ const Cart = () => {
 
                 <div className="text-right">
                   <p className="text-sm font-bold text-gray-900">
-                    {formatPrice(item.priceCents ? item.priceCents * item.quantity : undefined)}
+                    {formatPrice(
+                      item.priceCents
+                        ? item.priceCents * item.quantity
+                        : undefined
+                    )}
                   </p>
                 </div>
               </div>
@@ -180,7 +155,9 @@ const Cart = () => {
 
           <div className="border-t border-gray-200 p-2">
             <div className="flex items-center justify-between mb-2">
-              <span className="text-sm font-semibold text-gray-900">Total:</span>
+              <span className="text-sm font-semibold text-gray-900">
+                Total:
+              </span>
               <span className="text-base font-bold text-gray-900">
                 ${calculateTotal().toFixed(2)}
               </span>
@@ -190,7 +167,7 @@ const Cart = () => {
               onClick={checkout}
               className="w-full bg-blue-600 hover:bg-blue-700 text-white py-1.5 rounded text-xs font-semibold transition-colors"
             >
-              Proceed to Checkout
+              Checkout
             </button>
           </div>
         </div>
