@@ -1,5 +1,5 @@
 import { useSearchParams } from "react-router-dom";
-import { useProductCatalog, useCart } from "../../api/store/v1/store_rbt_react";
+import { useProductCatalog } from "../../api/store/v1/store_rbt_react";
 
 interface Product {
   id: string;
@@ -16,7 +16,6 @@ const Products = () => {
   const query = searchParams.get("query") || undefined;
 
   const { useListProducts } = useProductCatalog({ id: "default-catalog" });
-  const { addItem } = useCart({ id: "default-cart" });
   const { response } = useListProducts();
 
   if (response === undefined) return <>Loading...</>;
@@ -40,16 +39,12 @@ const Products = () => {
   };
 
   const addToCart = (product: Product) => {
-    addItem({
-      item: { productId: product.id, quantity: 1 },
-      catalogId: "default-catalog",
-    });
     if (window.parent) {
       window.parent.postMessage(
         {
           type: "prompt",
           payload: {
-            prompt: `One ${product.name} was added to my cart (product ID: ${product.id})`,
+            prompt: `Add one ${product.name} to my cart (product ID: ${product.id})`,
           },
         },
         "*"

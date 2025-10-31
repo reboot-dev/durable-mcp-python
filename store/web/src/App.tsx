@@ -1,6 +1,8 @@
 import { BrowserRouter as Router, Routes, Route, Link } from "react-router-dom";
 import Products from "./components/Products";
 import Cart from "./components/Cart";
+import Order from "./components/Order";
+import Orders from "./components/Orders";
 
 function App() {
   return (
@@ -8,6 +10,8 @@ function App() {
       <Routes>
         <Route path="/products" element={<Products />} />
         <Route path="/cart" element={<Cart />} />
+        <Route path="/order" element={<Order />} />
+        <Route path="/orders" element={<Orders />} />
         <Route
           path="/"
           element={
@@ -17,8 +21,9 @@ function App() {
                   Welcome to the Store
                 </h1>
                 <p className="text-gray-600">
-                  Navigate to <Link to="/products">/products</Link> or{" "}
-                  <Link to="/cart">/cart</Link>
+                  Navigate to <Link to="/products">/products</Link>,{" "}
+                  <Link to="/cart">/cart</Link>, or{" "}
+                  <Link to="/orders">/orders</Link>
                 </p>
               </div>
             </div>

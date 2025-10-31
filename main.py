@@ -1,31 +1,28 @@
 import asyncio
+import os
+import random
 import urllib.parse
 from mcp_ui_server import create_ui_resource
 from mcp_ui_server.core import UIResource
 from reboot.aio.external import InitializeContext
-from reboot.mcp.server import DurableMCP
+from reboot.aio.workflows import at_least_once, at_most_once
+from reboot.mcp.server import DurableMCP, DurableContext
 from store.backend.src.cart import CartServicer
-from store.backend.src.checkout import CheckoutServicer
-from store.backend.src.order import OrderServicer
 from store.backend.src.product import ProductCatalogServicer
-from store.backend.src.shipping import ShippingServicer
+from store.backend.src.order import OrdersServicer
 from store.v1 import store_pb2
-from store.v1.store_rbt import ProductCatalog, Cart
+from store.v1.store_rbt import ProductCatalog, Cart, Orders
 
-mcp = DurableMCP(path="/mcp", log_level="DEBUG")
+mcp = DurableMCP(path="/mcp")
 
 
 @mcp.tool()
 def show_products(search_query: str = "") -> list[UIResource]:
     """Display products matching the search query in an interactive UI.
-    Toggle Sidebar
-    
-    
 
     Args:
         search_query: The search term to filter products (e.g., 'shirts', 'pants', 'blue')
     """
-    # URL encode the search query
     encoded_query = urllib.parse.quote(search_query)
     iframe_url = f"http://localhost:3001/products?query={encoded_query}" if search_query else "http://localhost:3001/products"
 
@@ -62,12 +59,7 @@ def show_products(search_query: str = "") -> list[UIResource]:
 
 @mcp.tool()
 def show_cart() -> list[UIResource]:
-    """Display the shopping cart in an interactive UI.
-
-    Args:
-        cart_id: The ID of the cart to display
-    """
-    # URL encode the cart ID
+    """Display the shopping cart in an interactive UI."""
     iframe_url = f"http://localhost:3001/cart"
 
     ui_resource = create_ui_resource(
@@ -80,6 +72,242 @@ def show_cart() -> list[UIResource]:
             "encoding": "text"
         }
     )
+    return [ui_resource]
+
+
+@mcp.tool()
+def show_orders() -> list[UIResource]:
+    """Display past orders in an interactive UI."""
+    iframe_url = f"http://localhost:3001/orders"
+
+    ui_resource = create_ui_resource(
+        {
+            "uri": f"ui://orders",
+            "content": {
+                "type": "externalUrl",
+                "iframeUrl": iframe_url
+            },
+            "encoding": "text"
+        }
+    )
+    return [ui_resource]
+
+
+@mcp.tool()
+async def add_item_to_cart(
+    product_id: str, quantity: int, context: DurableContext
+) -> list[UIResource]:
+    """Add an item to the shopping cart.
+
+    Args:
+        product_id: The ID of the product to add
+        quantity: The quantity to add (default: 1)
+        catalog_id: The ID of the product catalog (default: "default-catalog")
+    """
+    cart_id = "default-cart"
+    catalog_id = "default-catalog"
+
+    # Verify product exists.
+    await ProductCatalog.ref(catalog_id).get_product(
+        context,
+        catalog_id=catalog_id,
+        product_id=product_id,
+    )
+
+    await Cart.ref(cart_id).add_item(
+        context,
+        item=store_pb2.CartItem(
+            product_id=product_id,
+            quantity=quantity,
+        ),
+        catalog_id=catalog_id,
+    )
+
+    iframe_url = f"http://localhost:3001/cart"
+
+    ui_resource = create_ui_resource(
+        {
+            "uri": f"ui://cart",
+            "content": {
+                "type": "externalUrl",
+                "iframeUrl": iframe_url
+            },
+            "encoding": "text"
+        }
+    )
+    return [ui_resource]
+
+
+# Mock stateless functions for checkout workflow
+async def get_shipping_quote(items: list, address: dict) -> dict:
+    """Mock function to get shipping quote."""
+    total_weight = len(items) * 2  # Mock weight calculation
+    base_cost = 500  # $5.00 base
+    weight_cost = total_weight * 50  # $0.50 per pound
+    total_cost = base_cost + weight_cost
+
+    return {
+        "cost_cents": total_cost,
+        "carrier": "Mock Shipping Co.",
+        "estimated_days": random.randint(3, 7),
+    }
+
+
+async def charge_credit_card(card_info: dict, amount_cents: int) -> dict:
+    """Mock function to charge credit card (non-idempotent)."""
+    # In real implementation, this would call a payment processor
+    return {
+        "transaction_id": f"txn_{random.randint(100000, 999999)}",
+        "last_four": card_info.get("number", "0000")[-4:],
+        "amount_cents": amount_cents,
+    }
+
+
+async def ship_order(items: list, address: dict, carrier: str) -> dict:
+    """Mock function to ship order (non-idempotent)."""
+    # In real implementation, this would call a shipping API
+    return {
+        "tracking_number": f"TRACK{random.randint(1000000000, 9999999999)}",
+        "carrier": carrier,
+        "status": "shipped",
+    }
+
+
+@mcp.tool()
+async def checkout(
+    card_number: str, card_cvv: int, card_expiration_month: int,
+    card_expiration_year: int, shipping_street_address: str,
+    shipping_city: str, shipping_state: str, shipping_country: str,
+    shipping_zip_code: str, context: DurableContext
+) -> list[UIResource]:
+    """Complete the checkout process for items in the cart.
+
+    Args:
+        card_number: Credit card number
+        card_cvv: Credit card CVV
+        card_expiration_month: Credit card expiration month
+        card_expiration_year: Credit card expiration year
+        shipping_street_address: Shipping street address
+        shipping_city: Shipping city
+        shipping_state: Shipping state
+        shipping_country: Shipping country
+        shipping_zip_code: Shipping zip code
+    """
+    cart_id = "default-cart"
+
+    # Get cart items
+    cart_response = await Cart.ref(cart_id).get_items(context)
+    items = list(cart_response.items)
+
+    if not items:
+        raise ValueError("Cart is empty")
+
+    # Calculate subtotal
+    subtotal_cents = sum(item.price_cents * item.quantity for item in items)
+
+    # Prepare address dict
+    address = {
+        "street_address": shipping_street_address,
+        "city": shipping_city,
+        "state": shipping_state,
+        "country": shipping_country,
+        "zip_code": shipping_zip_code,
+    }
+
+    # Get shipping quote (idempotent - at_least_once)
+    async def get_quote():
+        return await get_shipping_quote(items, address)
+
+    shipping_quote = await at_least_once(
+        "Get shipping quote",
+        context,
+        get_quote,
+        type=dict,
+    )
+
+    total_cents = subtotal_cents + shipping_quote["cost_cents"]
+
+    async def charge_card() -> dict:
+        return await charge_credit_card(
+            {
+                "number": card_number,
+                "cvv": card_cvv,
+                "expiration_month": card_expiration_month,
+                "expiration_year": card_expiration_year,
+            },
+            total_cents,
+        )
+
+    if os.environ.get("FAIL_CHECKOUT"):
+        await asyncio.Event().wait()
+
+    charge_result = await at_least_once(
+        "Charge credit card",
+        context,
+        charge_card,
+        type=dict,
+    )
+
+    # if charge_result.get("error"):
+    #     raise ValueError(f"Failed to charge card: {charge_result['error']}")
+    async def ship() -> dict:
+        return await ship_order(items, address, shipping_quote["carrier"])
+
+    shipping_result = await at_least_once(
+        "Ship order",
+        context,
+        ship,
+        type=dict,
+    )
+
+    # if shipping_result.get("error"):
+    #     raise ValueError(f"Failed to ship order: {shipping_result['error']}")
+
+    # Save order to Orders state.
+    order_id = f"order_{random.randint(100000, 999999)}"
+
+    order = store_pb2.Order(
+        order_id=order_id,
+        items=items,
+        transaction_id=charge_result["transaction_id"],
+        subtotal_cents=subtotal_cents,
+        shipping_cost_cents=shipping_quote["cost_cents"],
+        total_cents=total_cents,
+        tracking_number=shipping_result["tracking_number"],
+        carrier=shipping_result["carrier"],
+        created_at=int(asyncio.get_event_loop().time()),
+        shipping_address=store_pb2.Address(
+            street_address=shipping_street_address,
+            city=shipping_city,
+            state=shipping_state,
+            country=shipping_country,
+            zip_code=shipping_zip_code,
+        ),
+    )
+
+    await Orders.ref("default-orders").add_order(context, order=order)
+
+    # Empty the cart.
+    await Cart.ref(cart_id).empty_cart(context)
+
+    # Encode order details for URL
+    encoded_order = urllib.parse.quote(
+        f"{order_id}|{charge_result}|{subtotal_cents}|{shipping_quote['cost_cents']}|{total_cents}|{shipping_result}"
+    )
+
+    iframe_url = f"http://localhost:3001/order?data={encoded_order}"
+
+    ui_resource = create_ui_resource(
+        {
+            "uri": f"ui://order/{order_id}",
+            "content": {
+                "type": "externalUrl",
+                "iframeUrl": iframe_url
+            },
+            "encoding": "text"
+        }
+    )
+
     return [ui_resource]
 
 
@@ -342,16 +570,19 @@ async def initialize(context: InitializeContext):
         "default-cart",
     )
 
+    await Orders.create(
+        context,
+        "default-orders",
+    )
+
 
 async def main():
     # Reboot application that runs everything necessary for `DurableMCP`.
     await mcp.application(
         servicers=[
             CartServicer,
-            CheckoutServicer,
-            OrderServicer,
             ProductCatalogServicer,
-            ShippingServicer,
+            OrdersServicer,
         ],
         initialize=initialize,
     ).run()

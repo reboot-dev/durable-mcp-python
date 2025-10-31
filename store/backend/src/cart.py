@@ -94,6 +94,6 @@ class CartServicer(Cart.Servicer):
         context: WriterContext,
         request: store_pb2.EmptyCartRequest,
     ) -> store_pb2.EmptyCartResponse:
-        self.state.items = []
+        del self.state.items[:]
 
         return store_pb2.EmptyCartResponse()

@@ -20,31 +20,37 @@ mcp = DurableMCP(path="/mcp")
 
 @mcp.tool()
 async def add(a: int, b: int, context: DurableContext) -> int:
+    try:
 
-    async def do_side_effect() -> int:
-        """
-        Pretend that we are doing a side-effect that we can only
-        try to do once because it is not able to be performed
-        idempotently, hence using `at_most_once`.
-        """
-        return a + b
+        async def do_side_effect() -> int:
+            """
+            Pretend that we are doing a side-effect that we can only
+            try to do once because it is not able to be performed
+            idempotently, hence using `at_most_once`.
+            """
+            return a + b
 
-    # NOTE: if we reboot, e.g., due to a hardware failure, within
-    # `do_side_effect()` then `at_most_once` will forever raise with
-    # `AtMostOnceFailedBeforeCompleting` and you will need to handle
-    # appropriately.
-    result = await at_most_once(
-        "Do side-effect",
-        context,
-        do_side_effect,
-        type=int,
-    )
+        # NOTE: if we reboot, e.g., due to a hardware failure, within
+        # `do_side_effect()` then `at_most_once` will forever raise with
+        # `AtMostOnceFailedBeforeCompleting` and you will need to handle
+        # appropriately.
+        print("Calling at_most_once for side-effect...")
+        result = await at_most_once(
+            "Do side-effect",
+            context,
+            do_side_effect,
+            type=int,
+        )
+        print("Side-effect completed.")
 
-    await context.info(LOGGING_MESSAGE)
+        await context.info(LOGGING_MESSAGE)
 
-    await finish_event.wait()
+        await finish_event.wait()
 
-    return result
+        return result
+    except BaseException as e:
+        print(f"Error in add tool: {e}")
+        raise
 
 
 @mcp.tool()
@@ -71,9 +77,8 @@ class TestSomething(unittest.IsolatedAsyncioTestCase):
         received_message_event = asyncio.Event()
 
         async def message_handler(
-            message: RequestResponder[
-                types.ServerRequest, types.ClientResult
-            ] | types.ServerNotification | Exception,
+            message: RequestResponder[types.ServerRequest, types.ClientResult]
+            | types.ServerNotification | Exception,
         ) -> None:
             if isinstance(message, types.ServerNotification):
                 if isinstance(message.root, types.LoggingMessageNotification):
@@ -121,8 +126,8 @@ class TestSomething(unittest.IsolatedAsyncioTestCase):
             send_request_task.cancel()
             try:
                 await send_request_task
-            except:
-                pass
+            except BaseException as e:
+                print(f"Error occurred while sending request: {e}")
 
         print(f"Rebooting application running at {self.rbt.url()}...")
 
@@ -132,11 +137,12 @@ class TestSomething(unittest.IsolatedAsyncioTestCase):
         print(f"... application now at {self.rbt.url()}")
 
         async def message_handler_expecting_no_messages(
-            message: RequestResponder[
-                types.ServerRequest, types.ClientResult
-            ] | types.ServerNotification | Exception,
+            message: RequestResponder[types.ServerRequest, types.ClientResult]
+            | types.ServerNotification | Exception,
         ) -> None:
-            raise RuntimeError(f"Not expecting to get a message, got: {message}")
+            raise RuntimeError(
+                f"Not expecting to get a message, got: {message}"
+            )
 
         async with reconnect(
             self.rbt.url() + "/mcp",

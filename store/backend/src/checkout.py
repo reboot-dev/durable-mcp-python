@@ -16,7 +16,6 @@ class CheckoutServicer(Checkout.Servicer):
         context: TransactionContext,
         request: store_pb2.PlaceOrderRequest,
     ) -> store_pb2.PlaceOrderResponse:
-        # Get cart items
         cart_ref = Cart.ref("default-cart")
         cart_response = await cart_ref.get_items(context)
 
@@ -28,10 +27,8 @@ class CheckoutServicer(Checkout.Servicer):
         # For now, use a mock value (e.g., $10.00 = 1000 cents)
         shipping_cost_cents = 1000
 
-        # Create order ID
         order_id = str(uuid.uuid4())
 
-        # Create order items from cart items
         order_items = [
             store_pb2.OrderItem(
                 item=item,
@@ -39,7 +36,6 @@ class CheckoutServicer(Checkout.Servicer):
             ) for item in cart_response.items
         ]
 
-        # Create the order
         order = store_pb2.Order(
             order_id=order_id, items=order_items,
             shipping_cost_cents=shipping_cost_cents,

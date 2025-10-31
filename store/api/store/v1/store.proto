@@ -163,59 +163,43 @@ message UpdateProductResponse {}
 
 ////////////////////////////////////////////////////////////////////////
 
-message Shipping {
+message Orders {
   option (rbt.v1alpha1.state) = {};
 
-  repeated ShippingQuote quotes = 1;
-  repeated Shipment shipments = 2;
+  repeated Order orders = 1;
 }
 
 ////////////////////////////////////////////////////////////////////////
 
-service ShippingMethods {
-  rpc GetQuote(GetQuoteRequest) returns (GetQuoteResponse) {
-    option (rbt.v1alpha1.method).reader = {};
+service OrdersMethods {
+  rpc Create(CreateOrdersRequest) returns (CreateOrdersResponse) {
+    option (rbt.v1alpha1.method) = {
+      writer: {
+        constructor: {},
+      },
+    };
   }
-  rpc ShipOrder(ShipOrderRequest) returns (ShipOrderResponse) {
+  rpc AddOrder(AddOrderRequest) returns (AddOrderResponse) {
     option (rbt.v1alpha1.method).writer = {};
   }
+  rpc GetOrders(GetOrdersRequest) returns (GetOrdersResponse) {
+    option (rbt.v1alpha1.method).reader = {};
+  }
 }
 
 ////////////////////////////////////////////////////////////////////////
 
-message ShippingQuote {
-  string id = 1;
-  uint32 cost_cents = 2;
-  string carrier = 3;
-  int32 estimated_days = 4;
-}
-
-message Shipment {
-  string tracking_number = 1;
-  string carrier = 2;
-  string status = 3;
-  Address address = 4;
-}
-
-message GetQuoteRequest {
-  string shipping_id = 1;
-  Address address = 2;
-  repeated CartItem items = 3;
-}
-
-message GetQuoteResponse {
-  repeated ShippingQuote quotes = 1;
-}
-
-message ShipOrderRequest {
-  string shipping_id = 1;
-  string order_id = 2;
-  Address address = 3;
-  string quote_id = 4;
-}
-
-message ShipOrderResponse {
-  string tracking_number = 1;
+message Order {
+  string order_id = 1;
+  repeated CartItem items = 2;
+  string transaction_id = 3;
+  uint32 subtotal_cents = 4;
+  uint32 shipping_cost_cents = 5;
+  uint32 total_cents = 6;
+  string tracking_number = 7;
+  string carrier = 8;
+  int64 created_at = 9;
+  Address shipping_address = 10;
 }
 
 message Address {
@@ -226,108 +210,19 @@ message Address {
   string zip_code = 5;
 }
 
-////////////////////////////////////////////////////////////////////////
+message CreateOrdersRequest {}
 
-message Order {
-  option (rbt.v1alpha1.state) = {};
+message CreateOrdersResponse {}
 
-  string order_id = 1;
-  repeated OrderItem items = 3;
-  uint32 shipping_cost_cents = 4;
-  Address shipping_address = 5;
-  string status = 6;
-  int64 created_at = 7;
-  string tracking_number = 8;
-}
-
-////////////////////////////////////////////////////////////////////////
-
-service OrderMethods {
-  rpc GetOrder(GetOrderRequest) returns (Order) {
-    option (rbt.v1alpha1.method).reader = {};
-  }
-  rpc ListOrders(ListOrdersRequest) returns (ListOrdersResponse) {
-    option (rbt.v1alpha1.method).reader = {};
-  }
-  rpc UpdateOrderStatus(UpdateOrderStatusRequest) returns (UpdateOrderStatusResponse) {
-    option (rbt.v1alpha1.method).writer = {};
-  }
-}
-
-////////////////////////////////////////////////////////////////////////
-
-message OrderItem {
-  CartItem item = 1;
-  uint32 cost_cents = 2;
-}
-
-message GetOrderRequest {
-  string order_id = 1;
-}
-
-message ListOrdersRequest {
-}
-
-message ListOrdersResponse {
-  repeated Order orders = 1;
-}
-
-message UpdateOrderStatusRequest {
-  string order_id = 1;
-  string status = 2;
-}
-
-message UpdateOrderStatusResponse {}
-
-////////////////////////////////////////////////////////////////////////
-
-
-message Checkout {
-  option (rbt.v1alpha1.state) = {};
-
-  repeated Order completed_orders = 1;
-}
-
-////////////////////////////////////////////////////////////////////////
-
-service CheckoutMethods {
-  rpc PlaceOrder(PlaceOrderRequest) returns (PlaceOrderResponse) {
-    option (rbt.v1alpha1.method).writer = {};
-  }
-  rpc GetCheckoutSession(GetCheckoutSessionRequest) returns (CheckoutSession) {
-    option (rbt.v1alpha1.method).reader = {};
-  }
-}
-
-////////////////////////////////////////////////////////////////////////
-
-message CheckoutSession {
-  string session_id = 1;
-  repeated CartItem items = 3;
-  uint32 subtotal_cents = 4;
-  uint32 shipping_cost_cents = 5;
-  uint32 total_cents = 6;
-}
-
-message PlaceOrderRequest {
-  string checkout_id = 1;
-  Address shipping_address = 3;
-  CreditCardInfo payment = 4;
-  string shipping_quote_id = 5;
-}
-
-message PlaceOrderResponse {
+message AddOrderRequest {
   Order order = 1;
 }
 
-message GetCheckoutSessionRequest {
-  string checkout_id = 1;
-}
+message AddOrderResponse {}
 
-message CreditCardInfo {
-  string number = 1;
-  int32 cvv = 2;
-  int32 expiration_year = 3;
-  int32 expiration_month = 4;
+message GetOrdersRequest {}
+
+message GetOrdersResponse {
+  repeated Order orders = 1;
 }
 

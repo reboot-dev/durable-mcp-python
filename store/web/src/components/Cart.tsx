@@ -6,7 +6,6 @@ const Cart = () => {
   });
 
   const { response } = useGetItems();
-  console.log(response);
 
   if (response === undefined) return <>Loading...</>;
 
@@ -28,12 +27,13 @@ const Cart = () => {
 
   const updateQuantity = (productId: string, newQuantity: number) => {
     updateItemQuantity({ productId, quantity: newQuantity });
+
     if (window.parent) {
       window.parent.postMessage(
         {
           type: "prompt",
           payload: {
-            prompt: `Update quantity of product ${productId} to ${newQuantity}`,
+            prompt: `The quantity of product ${productId} has been updated to ${newQuantity} in my cart.`,
           },
         },
         "*"
@@ -49,7 +49,7 @@ const Cart = () => {
         {
           type: "prompt",
           payload: {
-            prompt: `Remove product ${productId} from my cart`,
+            prompt: `Product ${productId} has been removed from my cart.`,
           },
         },
         "*"
@@ -63,7 +63,7 @@ const Cart = () => {
         {
           type: "prompt",
           payload: {
-            prompt: `Checkout process started.`,
+            prompt: `Start checkout process`,
           },
         },
         "*"
