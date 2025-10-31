@@ -127,7 +127,7 @@ class SessionServicer(Session.Servicer):
 
             await self.ref().per_workflow(
                 "Store stream",
-            ).Write(context, store_stream)
+            ).write(context, store_stream)
 
             stream = Stream.ref(stream_id)
 
@@ -167,7 +167,7 @@ class SessionServicer(Session.Servicer):
 
                 await self.ref().per_workflow(
                     "Store client info on initialize",
-                ).Write(context, store_client_info)
+                ).write(context, store_client_info)
 
             with self._get_request_streams(
                 request_id,
