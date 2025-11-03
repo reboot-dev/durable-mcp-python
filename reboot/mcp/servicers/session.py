@@ -198,6 +198,10 @@ class SessionServicer(Session.Servicer):
 
                         event_id = get_event_id(write_message)
 
+                        # Skip transient messages without rebootEventId.
+                        if event_id is None:
+                            continue
+
                         related_request_id = (
                             write_message.metadata.related_request_id
                             if write_message.metadata is not None else None

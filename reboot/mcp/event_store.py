@@ -17,18 +17,22 @@ from typing import AsyncGenerator
 from uuid import uuid4
 
 
-def get_event_id(message: SessionMessage) -> EventId:
+def get_event_id(message: SessionMessage) -> EventId | None:
     if isinstance(
         message.message.root,
         mcp.types.JSONRPCRequest | mcp.types.JSONRPCNotification,
     ):
-        assert (
+        if (
             message.message.root.params is not None and
             "_meta" in message.message.root.params and
             "rebootEventId" in message.message.root.params["_meta"]
-        ), f"Missing event ID for {message.message.root}"
+        ):
+            return message.message.root.params["_meta"]["rebootEventId"]
 
-        return message.message.root.params["_meta"]["rebootEventId"]
+        # No rebootEventId means this is a transient message (e.g.,
+        # SDK error notification) that shouldn't be stored. Return
+        # None to signal it should be dropped.
+        return None
 
     assert isinstance(
         message.message.root,
