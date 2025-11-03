@@ -25,8 +25,9 @@ from mcp.shared.message import ServerMessageMetadata
 from rbt.mcp.v1.session_rbt import Session
 from rbt.v1alpha1.errors_pb2 import StateNotConstructed
 from reboot.aio.applications import Application
+from rebootdev.aio.servicers import Servicer
 from reboot.aio.contexts import EffectValidation, WorkflowContext
-from reboot.aio.external import ExternalContext
+from reboot.aio.external import ExternalContext, InitializeContext
 from reboot.aio.types import StateRef
 from reboot.aio.workflows import at_least_once
 from reboot.mcp.event_store import (
@@ -52,7 +53,7 @@ from starlette.responses import Response, StreamingResponse
 from starlette.routing import Route
 from starlette.types import Receive, Scope, Send
 from types import MethodType
-from typing import Any, Callable, Literal, Protocol, TypeAlias, cast
+from typing import Any, Awaitable, Callable, Literal, Protocol, TypeAlias, cast
 from uuid import uuid4, uuid5
 from uuid7 import create as uuid7  # type: ignore[import-untyped]
 
@@ -562,12 +563,38 @@ class DurableMCP:
             )
         )
 
-    def application(self) -> Application:
+    def application(
+        self,
+        *,
+        servicers: list[type[Servicer]] = [],
+        initialize: Callable[[InitializeContext], Awaitable[None]]
+        | None = None,
+    ) -> Application:
         """
+        :param servicers: (optional) the types of Reboot-powered servicers that
+                          this Application will serve.
+        
+        :param initialize: (optional) will be called after the Application's
+                           servicers have started for the first time, so that
+                           it can perform initialization logic (e.g.,
+                           constructing some well-known durable data structures,
+                           loading some data, etc. It must do so in the context
+                           of the given InitializeContext.
+       
         Returns a Reboot `Application` for running the MCP tools,
         resources, prompts, etc that were defined.
         """
-        application = Application(servicers=self.servicers())
+
+        async def default_initialize(context: InitializeContext, ) -> None:
+            # Do any app internal initialization here.
+
+            if initialize is not None:
+                await initialize(context)
+
+        application = Application(
+            servicers=servicers + self.servicers(),
+            initialize=default_initialize,
+        )
 
         application.http.mount(
             self._path,
