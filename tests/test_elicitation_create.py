@@ -10,7 +10,7 @@ from reboot.mcp.client import connect, reconnect
 from reboot.mcp.server import DurableContext, DurableMCP
 
 # `DurableMCP` server which will handle HTTP requests at path "/mcp".
-mcp = DurableMCP(path="/mcp")
+mcp = DurableMCP(path="/mcp", log_level="DEBUG")
 
 
 class BookingPreferences(BaseModel):

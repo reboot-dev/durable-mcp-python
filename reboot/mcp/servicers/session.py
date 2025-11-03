@@ -459,7 +459,13 @@ class SessionServicer(Session.Servicer):
                         read_stream_receive,
                         write_stream_send,
                         server.create_initialization_options(),
-                        raise_exceptions=True,
+                        # Set to False to handle "unknown request ID" errors
+                        # gracefully after reboot. MCP SDK v1.19.0's
+                        # `_handle_message()` has `case Exception():` that
+                        # raises when this is True. v1.13.1 did not raise.
+                        # Exceptions are still logged and sent to clients as
+                        # error notifications.
+                        raise_exceptions=False,
                         # Since we might resume we set `stateless=True`
                         # because we don't want the server to need to do
                         # initialization, but it will happily do it when the
