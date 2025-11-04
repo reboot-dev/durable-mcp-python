@@ -566,7 +566,7 @@ class DurableMCP:
     def application(
         self,
         *,
-        servicers: list[type[Servicer]] = [],
+        servicers: list[type[Servicer]] | None = None,
         initialize: Callable[[InitializeContext], Awaitable[None]]
         | None = None,
     ) -> Application:
@@ -585,14 +585,14 @@ class DurableMCP:
         resources, prompts, etc that were defined.
         """
 
-        async def default_initialize(context: InitializeContext, ) -> None:
+        async def default_initialize(context: InitializeContext) -> None:
             # Do any app internal initialization here.
 
             if initialize is not None:
                 await initialize(context)
 
         application = Application(
-            servicers=servicers + self.servicers(),
+            servicers=(servicers or []) + self.servicers(),
             initialize=default_initialize,
         )
 
