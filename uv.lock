@@ -307,7 +307,7 @@ requires-dist = [
     { name = "mcp", specifier = "==1.19.0" },
     { name = "mypy", marker = "extra == 'dev'", specifier = "==1.2.0" },
     { name = "pytest", marker = "extra == 'dev'", specifier = "==8.4.1" },
-    { name = "reboot", specifier = "==0.38.4" },
+    { name = "reboot", specifier = "==0.39.2" },
     { name = "twine", marker = "extra == 'dev'" },
     { name = "types-protobuf", marker = "extra == 'dev'", specifier = ">=4.24.0.20240129" },
     { name = "uuid7-standard", specifier = ">=1.1.0" },
@@ -1274,11 +1274,11 @@ wheels = [
 
 [[package]]
 name = "pyjwt"
-version = "2.8.0"
+version = "2.10.1"
 source = { registry = "https://pypi.org/simple" }
-sdist = { url = "https://files.pythonhosted.org/packages/30/72/8259b2bccfe4673330cea843ab23f86858a419d8f1493f66d413a76c7e3b/PyJWT-2.8.0.tar.gz", hash = "sha256:57e28d156e3d5c10088e0c68abb90bfac3df82b40a71bd0daa20c65ccd5c23de", size = 78313, upload-time = "2023-07-18T20:02:22.594Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/e7/46/bd74733ff231675599650d3e47f361794b22ef3e3770998dda30d3b63726/pyjwt-2.10.1.tar.gz", hash = "sha256:3cc5772eb20009233caf06e9d8a0577824723b44e6648ee0a2aedb6cf9381953", size = 87785, upload-time = "2024-11-28T03:43:29.933Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/2b/4f/e04a8067c7c96c364cef7ef73906504e2f40d690811c021e1a1901473a19/PyJWT-2.8.0-py3-none-any.whl", hash = "sha256:59127c392cc44c2da5bb3192169a91f429924e17aff6534d70fdc02ab3e04320", size = 22591, upload-time = "2023-07-18T20:02:21.561Z" },
+    { url = "https://files.pythonhosted.org/packages/61/ad/689f02752eeec26aed679477e80e632ef1b682313be70793d798c1d5fc8f/PyJWT-2.10.1-py3-none-any.whl", hash = "sha256:dcdd193e30abefd5debf142f9adfcdd2b58004e644f25406ffaebd50bd98dacb", size = 22997, upload-time = "2024-11-28T03:43:27.893Z" },
 ]
 
 [[package]]
@@ -1412,7 +1412,7 @@ wheels = [
 
 [[package]]
 name = "reboot"
-version = "0.38.4"
+version = "0.39.2"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "aiofiles" },
@@ -1456,10 +1456,9 @@ dependencies = [
     { name = "websockets" },
 ]
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/12/04/231a289a123e67d2c6a933e7e61f7477a7e85d93170696eea80ccad07eb0/reboot-0.38.4-py3-none-macosx_13_0_arm64.whl", hash = "sha256:1ef0bfe44e92de5b675391366755b7ab35abd12ddb2ee2514afe85de91d433ff", size = 18167100, upload-time = "2025-10-21T00:10:39.761Z" },
-    { url = "https://files.pythonhosted.org/packages/b3/f3/17303fd995e4af5bea9d20b54900eb6e996620edea1bcaac6bfcd9ad9ed7/reboot-0.38.4-py3-none-macosx_13_0_x86_64.whl", hash = "sha256:80c29ccba4d1c58138a4a808b515d0de6a9987f1f2967eca89da7f451e62cafb", size = 17898553, upload-time = "2025-10-21T01:15:30.703Z" },
-    { url = "https://files.pythonhosted.org/packages/e3/0c/275a62f2606d06e7102618c160002658baa983801eb87433aa26581fa602/reboot-0.38.4-py3-none-manylinux_2_35_aarch64.whl", hash = "sha256:4e6538c27172d25bb5c053a1a802da7df7014e62edeefbfa036af5ee2a8287f5", size = 21913909, upload-time = "2025-10-20T23:56:40.392Z" },
-    { url = "https://files.pythonhosted.org/packages/84/7b/6728d6cafe7595b26f736c05405ae404a42a532e12ae9083f17f2ccec9b8/reboot-0.38.4-py3-none-manylinux_2_35_x86_64.whl", hash = "sha256:add5b7a4396eb6e47916f0ee87846c699d47c95322083f8070dfc06498f04d24", size = 22034809, upload-time = "2025-10-20T23:56:29.809Z" },
+    { url = "https://files.pythonhosted.org/packages/32/10/7b4765e954c6aac909b1e2b7e05beb6a50ed915709ec45d36684bb7b54d2/reboot-0.39.2-py3-none-macosx_13_0_arm64.whl", hash = "sha256:9089051af817c84a4241d394ff3c38d928f094dd458c2648faaee005cae93465", size = 18254687, upload-time = "2025-11-04T22:07:01.125Z" },
+    { url = "https://files.pythonhosted.org/packages/e4/a2/cc6fcf2a5886e610c3497428641c79c2ebab12f3454e2a4fd6d13755a428/reboot-0.39.2-py3-none-manylinux_2_35_aarch64.whl", hash = "sha256:34d139dc7a00b84f26a485bdcba809147e0607db2a2ee303c0bca947bf9c6fcc", size = 22005743, upload-time = "2025-11-04T21:55:00.141Z" },
+    { url = "https://files.pythonhosted.org/packages/a7/85/ab7b776c6ffade3f6b0fd6adcea742f880ed284206cb57b0b5415cee69d6/reboot-0.39.2-py3-none-manylinux_2_35_x86_64.whl", hash = "sha256:d1fb03901a186e90097f4d7bb07e6eb5f55d597de632be0e777e55f74bbc7139", size = 22123359, upload-time = "2025-11-04T21:54:15.23Z" },
 ]
 
 [[package]]

@@ -42,7 +42,7 @@ from reboot.mcp.servicers.session import (
 )
 from reboot.mcp.servicers.stream import StreamServicer
 from reboot.std.collections.v1 import sorted_map
-from rebootdev.aio.headers import CONSENSUS_ID_HEADER, STATE_REF_HEADER
+from rebootdev.aio.headers import SERVER_ID_HEADER, STATE_REF_HEADER
 from rebootdev.aio.backoff import Backoff
 from rebootdev.memoize.v1.memoize_rbt import Memoize
 from rebootdev.settings import DOCS_BASE_URL
@@ -1054,7 +1054,7 @@ class StreamableHTTPASGIApp:
 
             # Need to delete consensus ID header so that we'll
             # properly get routed.
-            del headers[CONSENSUS_ID_HEADER]
+            del headers[SERVER_ID_HEADER]
 
             response: StreamingResponse | Response
 
