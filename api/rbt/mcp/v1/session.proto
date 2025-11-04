@@ -54,6 +54,10 @@ message Implementation {
 message HandleMessageRequest {
   string path = 1;
   bytes message_bytes = 2;
+  // OAuth 2.1 AccessToken serialized as JSON.
+  // Contains {token, client_id, scopes, expires_at}.
+  // This allows tools to call get_access_token() in workflows.
+  string access_token_json = 3;
 }
 
 message HandleMessageResponse {}
@@ -63,6 +67,10 @@ message HandleMessageResponse {}
 message RunRequest {
   string path = 1;
   bytes message_bytes = 2;
+  // OAuth 2.1 AccessToken serialized as JSON.
+  // Contains {token, client_id, scopes, expires_at}.
+  // This allows tools to call get_access_token() in workflows.
+  string access_token_json = 3;
 }
 
 message RunResponse {}

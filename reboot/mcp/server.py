@@ -2,12 +2,20 @@ import asyncio
 import functools
 import httpx
 import inspect
+import json
 import logging
+import mcp.server.auth.middleware.auth_context as auth_context_module
 import mcp.types
 import pickle
 from dataclasses import dataclass
 from log.log import get_logger, set_log_level
 from mcp.server import fastmcp
+from mcp.server.auth.middleware.auth_context import (
+    AuthContextMiddleware,
+    get_access_token,
+)
+from mcp.server.auth.middleware.bearer_auth import BearerAuthBackend
+from mcp.server.auth.provider import ProviderTokenVerifier
 from mcp.server.elicitation import (
     AcceptedElicitation,
     CancelledElicitation,
@@ -47,6 +55,8 @@ from rebootdev.memoize.v1.memoize_rbt import Memoize
 from rebootdev.settings import DOCS_BASE_URL
 from starlette.applications import Starlette
 from starlette.datastructures import MutableHeaders
+from starlette.middleware import Middleware
+from starlette.middleware.authentication import AuthenticationMiddleware
 from starlette.requests import Request
 from starlette.responses import Response, StreamingResponse
 from starlette.routing import Route
@@ -57,6 +67,33 @@ from uuid import uuid4, uuid5
 from uuid7 import create as uuid7  # type: ignore[import-untyped]
 
 logger = get_logger(__name__)
+
+# Monkey-patch get_access_token() to work in workflows.
+# The original implementation only works in the HTTP handler context,
+# but we need it to work in spawned workflows.
+import mcp.server.auth.middleware.auth_context as auth_context_module
+_original_get_access_token = auth_context_module.get_access_token
+
+
+def _workflow_aware_get_access_token():
+    """
+    Get AccessToken that works both in HTTP handlers and workflows.
+
+    First tries the workflow contextvar (for spawned workflows),
+    then falls back to the middleware contextvar (for HTTP handlers).
+    """
+    # Try workflow contextvar first.
+    from reboot.mcp.servicers.session import get_workflow_access_token
+    access_token = get_workflow_access_token()
+    if access_token is not None:
+        return access_token
+
+    # Fall back to middleware contextvar.
+    return _original_get_access_token()
+
+
+# Replace the module-level function.
+auth_context_module.get_access_token = _workflow_aware_get_access_token
 
 
 class DurableSession:
@@ -320,12 +357,18 @@ class DurableMCP:
         *,
         path: str,
         log_level: LogLevel = "WARNING",
+        auth_server_provider: Any = None,
+        token_verifier: Any = None,
+        auth: Any = None,
     ):
         self._log_level = log_level
         self._path = path
         self._resources = []
         self._prompts = []
         self._tools = []
+        self._auth_server_provider = auth_server_provider
+        self._token_verifier = token_verifier
+        self._auth = auth
 
         set_log_level(logging.getLevelNamesMapping()[log_level])
 
@@ -585,6 +628,9 @@ class DurableMCP:
             self._resources,
             self._prompts,
             self._tools,
+            self._auth_server_provider,
+            self._token_verifier,
+            self._auth,
         )
 
 
@@ -594,9 +640,17 @@ def _streamable_http_app(
     resources: list[Resource],
     prompts: list[Prompt],
     tools: list[Tool],
+    auth_server_provider: Any,
+    token_verifier: Any,
+    auth: Any,
     external_context_from_request: Callable[[Request], ExternalContext],
 ):
-    mcp = fastmcp.FastMCP(log_level=log_level)
+    mcp = fastmcp.FastMCP(
+        log_level=log_level,
+        auth_server_provider=auth_server_provider,
+        token_verifier=token_verifier,
+        auth=auth,
+    )
 
     for resource in resources:
         mcp.resource(
@@ -626,16 +680,64 @@ def _streamable_http_app(
 
     _servers[path] = mcp._mcp_server
 
+    # Wrap external_context_from_request to extract OAuth access token.
+    # This extracts the AccessToken from the auth middleware contextvar and
+    # passes it through to workflows via bearer_token field (as JSON).
+    def external_context_with_access_token(request: Request) -> ExternalContext:
+        # Get base context from original factory.
+        base_context = external_context_from_request(request)
+
+        # Get AccessToken using monkey-patched get_access_token().
+        # (The monkey-patch is applied at module load time above.)
+        access_token = get_access_token()
+
+        # If we have an AccessToken, serialize it to JSON and pass through bearer_token.
+        if access_token:
+            access_token_json = json.dumps({
+                "token": access_token.token,
+                "client_id": access_token.client_id,
+                "scopes": access_token.scopes,
+                "expires_at": access_token.expires_at,
+            })
+            return ExternalContext(
+                name=base_context.name,
+                channel_manager=base_context.channel_manager,
+                bearer_token=access_token_json,
+            )
+        else:
+            return base_context
+
+    # Create the endpoint.
+    endpoint = StreamableHTTPASGIApp(
+        path,
+        external_context_with_access_token,
+    )
+
+    # Set up auth middleware if configured.
+    middleware: list[Middleware] = []
+
+    if auth_server_provider or token_verifier:
+        # Create token verifier if not provided.
+        if not token_verifier and auth_server_provider:
+            token_verifier = ProviderTokenVerifier(auth_server_provider)
+
+        # Add authentication middleware.
+        middleware = [
+            Middleware(
+                AuthenticationMiddleware,
+                backend=BearerAuthBackend(token_verifier),
+            ),
+            Middleware(AuthContextMiddleware),
+        ]
+
     return Starlette(
         routes=[
             Route(
                 "/{path:path}",
-                endpoint=StreamableHTTPASGIApp(
-                    path,
-                    external_context_from_request,
-                ),
+                endpoint=endpoint,
             ),
         ],
+        middleware=middleware,
     )
 
 
@@ -1068,6 +1170,10 @@ class StreamableHTTPASGIApp:
 
         # This request has properly been forwarded to the consensus
         # responsible for this session.
+        #
+        # Get context from factory - note that the factory has been wrapped
+        # to extract bearer tokens, so context.bearer_token will be set if
+        # an Authorization header was present.
         context = self._external_context_from_request(request)
 
         mcp_session_id = request.headers.get(MCP_SESSION_ID_HEADER)
@@ -1212,10 +1318,16 @@ class StreamableHTTPASGIApp:
                         message.metadata.request_context = None  # type: ignore
                         # TODO: ideally we spawn `HandleMessage`
                         # _before_ a 202 Accepted is sent.
+
+                        # Extract access_token_json from context.bearer_token.
+                        # This was set by external_context_with_access_token wrapper.
+                        access_token_json = context.bearer_token if isinstance(context, ExternalContext) else None
+
                         await session.spawn().HandleMessage(
                             context,
                             path=self._path,
                             message_bytes=pickle.dumps(message),
+                            access_token_json=access_token_json,
                         )
 
                         if not isinstance(message, Exception) and isinstance(

@@ -1,5 +1,6 @@
 import anyio
 import asyncio
+import json
 import mcp.types
 import pickle
 from contextvars import ContextVar
@@ -10,6 +11,7 @@ from anyio.streams.memory import (
 from contextlib import contextmanager
 from dataclasses import dataclass
 from log.log import get_logger
+from mcp.server.auth.provider import AccessToken
 from mcp.server.lowlevel.server import Server
 from mcp.shared.message import ServerMessageMetadata, SessionMessage
 from rbt.mcp.v1.session_rbt import (
@@ -44,6 +46,42 @@ _context: ContextVar[WorkflowContext | None] = ContextVar(
     "`WorkflowContext` of current message being handled",
     default=None,
 )
+
+# Workflow-scoped contextvar for OAuth 2.1 AccessToken.
+# This is set when a workflow starts and makes get_access_token() work in workflows.
+_workflow_access_token: ContextVar[AccessToken | None] = ContextVar(
+    "OAuth 2.1 AccessToken for current workflow",
+    default=None,
+)
+
+
+def get_workflow_access_token() -> AccessToken | None:
+    """
+    Get the OAuth 2.1 AccessToken for the current workflow.
+
+    This is used by tools to check scopes and access user information.
+    It works across spawn boundaries unlike the middleware contextvar.
+    """
+    return _workflow_access_token.get()
+
+
+def _deserialize_access_token(bearer_token_json: str | None) -> AccessToken | None:
+    """Deserialize AccessToken from JSON in bearer_token field."""
+    if not bearer_token_json:
+        return None
+
+    try:
+        data = json.loads(bearer_token_json)
+        return AccessToken(
+            token=data["token"],
+            client_id=data["client_id"],
+            scopes=data["scopes"],
+            expires_at=data["expires_at"],
+        )
+    except (json.JSONDecodeError, KeyError, TypeError):
+        # If deserialization fails, bearer_token might be a raw token string
+        # from a client that doesn't use our wrapper. Return None.
+        return None
 
 
 @dataclass(kw_only=True)
@@ -109,6 +147,11 @@ class SessionServicer(Session.Servicer):
         context: WorkflowContext,
         request: HandleMessageRequest,
     ) -> HandleMessageResponse:
+        # Deserialize and set OAuth 2.1 AccessToken from proto field.
+        # This makes get_access_token() work in the spawned Run workflow.
+        access_token = _deserialize_access_token(request.access_token_json)
+        _workflow_access_token.set(access_token)
+
         message = pickle.loads(request.message_bytes)
 
         if isinstance(message.message.root, mcp.types.JSONRPCRequest):
@@ -127,7 +170,7 @@ class SessionServicer(Session.Servicer):
 
             await self.ref().per_workflow(
                 "Store stream",
-            ).Write(context, store_stream)
+            ).write(context, store_stream)
 
             stream = Stream.ref(stream_id)
 
@@ -167,7 +210,7 @@ class SessionServicer(Session.Servicer):
 
                 await self.ref().per_workflow(
                     "Store client info on initialize",
-                ).Write(context, store_client_info)
+                ).write(context, store_client_info)
 
             with self._get_request_streams(
                 request_id,
@@ -179,6 +222,7 @@ class SessionServicer(Session.Servicer):
                     context,
                     path=request.path,
                     message_bytes=request.message_bytes,
+                    access_token_json=request.access_token_json,
                 )
 
                 async def send_and_receive():
@@ -363,6 +407,12 @@ class SessionServicer(Session.Servicer):
         context: WorkflowContext,
         request: RunRequest,
     ) -> RunResponse:
+        # Deserialize and set OAuth 2.1 AccessToken from proto field.
+        # This makes get_access_token() work in this workflow and any
+        # tool functions it calls.
+        access_token = _deserialize_access_token(request.access_token_json)
+        _workflow_access_token.set(access_token)
+
         path = request.path
         message = pickle.loads(request.message_bytes)
 
@@ -452,6 +502,11 @@ class SessionServicer(Session.Servicer):
             async def server_run():
                 assert _context.get() is None
                 _context.set(context)
+
+                # Set OAuth 2.1 AccessToken in this async task's contextvar.
+                # The access_token variable comes from the parent Run method scope.
+                _workflow_access_token.set(access_token)
+
                 try:
                     global _servers
                     server = _servers[path]
@@ -472,6 +527,7 @@ class SessionServicer(Session.Servicer):
                     raise
                 finally:
                     _context.set(None)
+                    _workflow_access_token.set(None)
 
             # Run this as an asyncio task because it blocks when
             # calling `write_stream_send.send()`.
