@@ -349,8 +349,16 @@ class SessionServicer(Session.Servicer):
                     read_stream_send, _ = read_stream
 
                     await read_stream_send.send(message)
+
+                # Since we're not longer expecting a response for this
+                # event ID we can remove it. Note that this also
+                # ensure that during effect validation we won't try
+                # and process the message more than once.
+                del self._write_request_ids[event_id]
             else:
-                logger.info(f"Ignoring client response as server must have rebooted")
+                logger.info(
+                    "Ignoring unknown client response (maybe the server rebooted?)"
+                )
 
             return HandleMessageResponse()
 
