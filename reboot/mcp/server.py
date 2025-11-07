@@ -8,7 +8,10 @@ import pickle
 from dataclasses import dataclass
 from log.log import get_logger, set_log_level
 from mcp.server import fastmcp
-from mcp.server.auth.middleware.auth_context import AuthContextMiddleware
+from mcp.server.auth.middleware.auth_context import (
+    AuthContextMiddleware,
+    get_access_token,
+)
 from mcp.server.auth.middleware.bearer_auth import (
     BearerAuthBackend,
     RequireAuthMiddleware,
@@ -46,6 +49,8 @@ from reboot.mcp.event_store import (
     replay,
     qualified_stream_id,
 )
+from reboot.protobuf import from_model
+from google.protobuf import struct_pb2
 from reboot.mcp.servicers.session import (
     SessionServicer,
     _servers,
@@ -1051,6 +1056,12 @@ def _wrap_tool(fn: mcp.types.AnyFunction) -> mcp.types.AnyFunction:
                 return await fn(**dict(bound.arguments))
 
             return fn(**dict(bound.arguments))
+        except PermissionError as e:
+            # Log authorization failures at `INFO` level without traceback.
+            logger.info(
+                f"Authorization denied in tool {fn.__name__}: {e}"
+            )
+            raise
         except:
             import traceback
             traceback.print_exc()
@@ -1315,12 +1326,28 @@ class StreamableHTTPASGIApp:
                         # grab what is necessary and send if along
                         # in a picklable way.
                         message.metadata.request_context = None  # type: ignore
+
+                        # Extract `AccessToken` from `contextvar` and serialize
+                        # to protobuf `Value` (`contextvars` don't survive
+                        # across subprocess boundaries).
+                        access_token = get_access_token()
+                        if access_token is not None:
+                            access_token_value = from_model(
+                                access_token,
+                                by_alias=True,
+                                mode="json",
+                                exclude_none=True,
+                            )
+                        else:
+                            access_token_value = None
+
                         # TODO: ideally we spawn `HandleMessage`
                         # _before_ a 202 Accepted is sent.
                         await session.spawn().HandleMessage(
                             context,
                             path=self._path,
                             message_bytes=pickle.dumps(message),
+                            access_token=access_token_value,
                         )
 
                         if not isinstance(message, Exception) and isinstance(
