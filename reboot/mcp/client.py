@@ -49,6 +49,7 @@ async def connect(
     url: str,
     *,
     headers: dict[str, str] | None = None,
+    auth: httpx.Auth | None = None,
     terminate_on_close: bool = True,
     elicitation_callback: ElicitationFnT | None = None,
     message_handler: MessageHandlerFnT | None = None,
@@ -56,6 +57,7 @@ async def connect(
     async with streamablehttp_client(
         url,
         headers=headers,
+        auth=auth,
         terminate_on_close=terminate_on_close,
         httpx_client_factory=create_mcp_http_client,
     ) as (read_stream, write_stream, get_session_id):
@@ -84,16 +86,22 @@ async def reconnect(
     session_id: str,
     protocol_version: str | int,
     next_request_id: int,
+    headers: dict[str, str] | None = None,
+    auth: httpx.Auth | None = None,
     terminate_on_close: bool = True,
     elicitation_callback: ElicitationFnT | None = None,
     message_handler: MessageHandlerFnT | None = None,
 ) -> AsyncIterator[mcp.ClientSession]:
-    headers: dict[str, Any] = {}
-    headers[MCP_SESSION_ID_HEADER] = session_id
-    headers[MCP_PROTOCOL_VERSION_HEADER] = protocol_version
+    # Merge user headers with required session and protocol headers.
+    all_headers: dict[str, Any] = {}
+    if headers is not None:
+        all_headers.update(headers)
+    all_headers[MCP_SESSION_ID_HEADER] = session_id
+    all_headers[MCP_PROTOCOL_VERSION_HEADER] = protocol_version
     async with streamablehttp_client(
         url,
-        headers=headers,
+        headers=all_headers,
+        auth=auth,
         terminate_on_close=terminate_on_close,
         httpx_client_factory=create_mcp_http_client,
     ) as (read_stream, write_stream, get_session_id):
