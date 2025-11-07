@@ -2,6 +2,7 @@ syntax = "proto3";
 
 package rbt.mcp.v1;
 
+import "google/protobuf/struct.proto";
 import "rbt/v1alpha1/options.proto";
 
 ////////////////////////////////////////////////////////////////////////
@@ -54,6 +55,7 @@ message Implementation {
 message HandleMessageRequest {
   string path = 1;
   bytes message_bytes = 2;
+  optional google.protobuf.Value access_token = 3;
 }
 
 message HandleMessageResponse {}
@@ -63,6 +65,7 @@ message HandleMessageResponse {}
 message RunRequest {
   string path = 1;
   bytes message_bytes = 2;
+  optional google.protobuf.Value access_token = 3;
 }
 
 message RunResponse {}

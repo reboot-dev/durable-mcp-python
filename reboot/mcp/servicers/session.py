@@ -10,6 +10,9 @@ from anyio.streams.memory import (
 from contextlib import contextmanager
 from dataclasses import dataclass
 from log.log import get_logger
+from mcp.server.auth.middleware.auth_context import auth_context_var
+from mcp.server.auth.middleware.bearer_auth import AuthenticatedUser
+from mcp.server.auth.provider import AccessToken
 from mcp.server.lowlevel.server import Server
 from mcp.shared.message import ServerMessageMetadata, SessionMessage
 from rbt.mcp.v1.session_rbt import (
@@ -30,7 +33,7 @@ from reboot.mcp.event_store import (
     qualified_stream_id,
     replace_whole_floats_with_ints,
 )
-from reboot.protobuf import as_dict, from_model
+from reboot.protobuf import as_dict, as_model, from_model
 from rebootdev.aio.backoff import Backoff
 
 logger = get_logger(__name__)
@@ -179,6 +182,11 @@ class SessionServicer(Session.Servicer):
                     context,
                     path=request.path,
                     message_bytes=request.message_bytes,
+                    access_token=(
+                        request.access_token
+                        if request.HasField("access_token")
+                        else None
+                    ),
                 )
 
                 async def send_and_receive():
@@ -384,6 +392,13 @@ class SessionServicer(Session.Servicer):
             _, read_stream_receive = read_stream
             write_stream_send, _ = write_stream
 
+            # Restore `AccessToken` from request to `contextvar`
+            # (`contextvars` don't survive across subprocess boundaries).
+            access_token: AccessToken | None = None
+            # Check if `optional` field is set (we pass `None` when no auth).
+            if request.HasField("access_token"):
+                access_token = as_model(request.access_token, AccessToken)
+
             async def cancel_outstanding_requests():
                 """
                 Helper that sends cancellations after a reboot for
@@ -460,6 +475,13 @@ class SessionServicer(Session.Servicer):
             async def server_run():
                 assert _context.get() is None
                 _context.set(context)
+
+                # Set `access_token` in `auth_context_var` if present.
+                auth_token = None
+                if access_token is not None:
+                    authenticated_user = AuthenticatedUser(access_token)
+                    auth_token = auth_context_var.set(authenticated_user)
+
                 try:
                     global _servers
                     server = _servers[path]
@@ -480,6 +502,8 @@ class SessionServicer(Session.Servicer):
                     raise
                 finally:
                     _context.set(None)
+                    if auth_token is not None:
+                        auth_context_var.reset(auth_token)
 
             # Run this as an asyncio task because it blocks when
             # calling `write_stream_send.send()`.
