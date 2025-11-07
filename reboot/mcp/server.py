@@ -8,6 +8,17 @@ import pickle
 from dataclasses import dataclass
 from log.log import get_logger, set_log_level
 from mcp.server import fastmcp
+from mcp.server.auth.middleware.auth_context import AuthContextMiddleware
+from mcp.server.auth.middleware.bearer_auth import (
+    BearerAuthBackend,
+    RequireAuthMiddleware,
+)
+from mcp.server.auth.provider import (
+    OAuthAuthorizationServerProvider,
+    ProviderTokenVerifier,
+    TokenVerifier,
+)
+from mcp.server.auth.settings import AuthSettings
 from mcp.server.elicitation import (
     AcceptedElicitation,
     CancelledElicitation,
@@ -48,6 +59,8 @@ from rebootdev.memoize.v1.memoize_rbt import Memoize
 from rebootdev.settings import DOCS_BASE_URL
 from starlette.applications import Starlette
 from starlette.datastructures import MutableHeaders
+from starlette.middleware import Middleware
+from starlette.middleware.authentication import AuthenticationMiddleware
 from starlette.requests import Request
 from starlette.responses import Response, StreamingResponse
 from starlette.routing import Route
@@ -315,18 +328,47 @@ class DurableMCP:
     _resources: list[Resource]
     _prompts: list[Prompt]
     _tools: list[Tool]
+    _auth: AuthSettings | None
+    _auth_server_provider: OAuthAuthorizationServerProvider[Any, Any, Any] | None
+    _token_verifier: TokenVerifier | None
 
     def __init__(
         self,
         *,
         path: str,
         log_level: LogLevel = "WARNING",
+        auth: AuthSettings | None = None,
+        auth_server_provider: (
+            OAuthAuthorizationServerProvider[Any, Any, Any] | None
+        ) = None,
+        token_verifier: TokenVerifier | None = None,
     ):
         self._log_level = log_level
         self._path = path
         self._resources = []
         self._prompts = []
         self._tools = []
+        self._auth = auth
+        self._auth_server_provider = auth_server_provider
+        self._token_verifier = token_verifier
+
+        # Validate auth configuration (same as `FastMCP`).
+        if self._auth is not None:
+            if auth_server_provider and token_verifier:
+                raise ValueError(
+                    "Cannot specify both auth_server_provider and "
+                    "token_verifier"
+                )
+            if not auth_server_provider and not token_verifier:
+                raise ValueError(
+                    "Must specify either auth_server_provider or "
+                    "token_verifier when auth is enabled"
+                )
+        elif auth_server_provider or token_verifier:
+            raise ValueError(
+                "Cannot specify auth_server_provider or token_verifier "
+                "without auth settings"
+            )
 
         set_log_level(logging.getLevelNamesMapping()[log_level])
 
@@ -612,6 +654,9 @@ class DurableMCP:
             self._resources,
             self._prompts,
             self._tools,
+            self._auth,
+            self._auth_server_provider,
+            self._token_verifier,
         )
 
 
@@ -621,9 +666,21 @@ def _streamable_http_app(
     resources: list[Resource],
     prompts: list[Prompt],
     tools: list[Tool],
+    auth: AuthSettings | None,
+    auth_server_provider: OAuthAuthorizationServerProvider[Any, Any, Any] | None,
+    token_verifier: TokenVerifier | None,
     external_context_from_request: Callable[[Request], ExternalContext],
 ):
-    mcp = fastmcp.FastMCP(log_level=log_level)
+    # Create token verifier from provider if needed (same as `FastMCP`).
+    if auth_server_provider and not token_verifier:
+        token_verifier = ProviderTokenVerifier(auth_server_provider)
+
+    mcp = fastmcp.FastMCP(
+        log_level=log_level,
+        auth=auth,
+        auth_server_provider=auth_server_provider,
+        token_verifier=token_verifier,
+    )
 
     for resource in resources:
         mcp.resource(
@@ -653,16 +710,37 @@ def _streamable_http_app(
 
     _servers[path] = mcp._mcp_server
 
+    # Create the `endpoint`.
+    endpoint = StreamableHTTPASGIApp(
+        path,
+        external_context_from_request,
+    )
+
+    # Add authentication middleware if `token_verifier` is configured.
+    middleware = None
+    if token_verifier:
+        middleware = [
+            Middleware(
+                AuthenticationMiddleware,
+                backend=BearerAuthBackend(token_verifier),
+            ),
+            Middleware(AuthContextMiddleware),
+        ]
+        # Wrap `endpoint` with auth requirement middleware.
+        required_scopes = (auth.required_scopes if auth else None) or []
+        resource_metadata_url = None
+        endpoint = RequireAuthMiddleware(
+            endpoint, required_scopes, resource_metadata_url
+        )
+
     return Starlette(
         routes=[
             Route(
                 "/{path:path}",
-                endpoint=StreamableHTTPASGIApp(
-                    path,
-                    external_context_from_request,
-                ),
+                endpoint=endpoint,
             ),
         ],
+        middleware=middleware,
     )
 
 
