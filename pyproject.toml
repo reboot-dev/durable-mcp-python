@@ -1,6 +1,6 @@
 [project]
 name = "durable-mcp"
-version = "0.5.0"
+version = "0.5.3"
 description = "Durable Model Context Protocol (MCP) helpers for building resumable MCP servers on top of Reboot durable workflows."
 readme = "README.md"
 license = { file = "LICENSE" }
@@ -21,7 +21,7 @@ classifiers = [
 ]
 requires-python = ">=3.12.11"
 dependencies = [
-    "reboot==0.39.2",
+    "reboot==0.39.3",
     "mcp==1.21.0",
     "uuid7-standard>=1.1.0",  # Latest as of 2025/09/30.
 ]
