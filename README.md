@@ -261,7 +261,8 @@ you automatically.
 - [ ] `notifications/cancelled`
 
 ### TODO:
-- [ ] Auth pass through to MCP SDK
+- [x] Auth pass through to MCP SDK
+- [ ] Add Auth examples
 - [ ] Adding tools, resources, and prompts dynamically
 - [ ] Add examples of how to test via `Reboot().start/up/down/stop()`
 - [ ] Add example of rebooting server using MCP Inspector version [0.16.7](https://github.com/modelcontextprotocol/inspector/releases/tag/0.16.7) which includes [modelcontextprotocol/inspector#787](https://github.com/modelcontextprotocol/inspector/pull/787)
