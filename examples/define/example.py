@@ -1,16 +1,18 @@
 """
-Technical Glossary with SortedMap CRUD Operations.
+Technical Glossary with OrderedMap CRUD Operations.
 
-Demonstrates all SortedMap operations: insert, get, range, reverse_range,
-and remove, using a technical terms glossary as an example.
+Demonstrates OrderedMap operations using Pydantic models and
+from_model/as_model helpers: Insert, Search, Range, ReverseRange, and
+Remove, using a technical terms glossary as an example.
 """
 
 import asyncio
-import json
 import sys
 import time
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List
+
+from pydantic import BaseModel
 
 # Add api/ to Python path for generated proto code.
 api_path = Path(__file__).parent.parent.parent / "api"
@@ -18,11 +20,24 @@ if api_path.exists():
     sys.path.insert(0, str(api_path))
 
 from reboot.mcp.server import DurableMCP, DurableContext
-from reboot.std.collections.v1.sorted_map import SortedMap
+from reboot.std.collections.ordered_map.v1.ordered_map import (
+    OrderedMap,
+    servicers as ordered_map_servicers,
+)
+from rebootdev.protobuf import from_model, as_model
 from uuid7 import create as uuid7  # type: ignore[import-untyped]
 
 # Initialize MCP server.
 mcp = DurableMCP(path="/mcp")
+
+
+# Pydantic model for term entries.
+class TermEntry(BaseModel):
+    term: str
+    definition: str
+    category: str = "general"
+    examples: List[str] = []
+    timestamp: int
 
 
 @mcp.tool()
@@ -36,7 +51,7 @@ async def add_term(
     """
     Add a technical term to the glossary.
 
-    Stores the term in two SortedMaps:
+    Stores the term in two OrderedMaps:
     - Alphabetically by term name (for lookup and browsing).
     - Chronologically by UUIDv7 (for recent additions).
 
@@ -50,30 +65,33 @@ async def add_term(
     Returns:
         Confirmation with the term and timestamp.
     """
-    terms_map = SortedMap.ref("terms")
-    recent_map = SortedMap.ref("recent")
+    terms_map = OrderedMap.ref("terms")
+    recent_map = OrderedMap.ref("recent")
 
     timestamp = int(time.time() * 1000)
 
-    term_data = {
-        "term": term,
-        "definition": definition,
-        "category": category,
-        "examples": examples or [],
-        "timestamp": timestamp,
-    }
+    # Create Pydantic model instance.
+    term_entry = TermEntry(
+        term=term,
+        definition=definition,
+        category=category,
+        examples=examples or [],
+        timestamp=timestamp,
+    )
 
     # Insert into alphabetical map (keyed by term).
     await terms_map.insert(
         context,
-        entries={term.lower(): json.dumps(term_data).encode("utf-8")},
+        key=term.lower(),
+        value=from_model(term_entry),
     )
 
     # Insert into chronological map (keyed by UUIDv7).
     recent_key = str(uuid7())
     await recent_map.insert(
         context,
-        entries={recent_key: json.dumps(term_data).encode("utf-8")},
+        key=recent_key,
+        value=from_model(term_entry),
     )
 
     return {
@@ -91,7 +109,7 @@ async def define(
     """
     Look up a term's definition.
 
-    Uses the `get` method for point lookup.
+    Uses the `search` method for point lookup.
 
     Args:
         term: The term to look up.
@@ -100,21 +118,21 @@ async def define(
     Returns:
         Term definition or error if not found.
     """
-    terms_map = SortedMap.ref("terms")
+    terms_map = OrderedMap.ref("terms")
 
-    response = await terms_map.get(context, key=term.lower())
+    response = await terms_map.search(context, key=term.lower())
 
-    if not response.HasField("value"):
+    if not response.found:
         return {
             "status": "error",
             "message": f"Term '{term}' not found in glossary",
         }
 
-    term_data = json.loads(response.value.decode("utf-8"))
+    term_entry = as_model(response.value, TermEntry)
 
     return {
         "status": "success",
-        "term": term_data,
+        "term": term_entry.model_dump(),
     }
 
 
@@ -136,12 +154,12 @@ async def remove_term(
     Returns:
         Confirmation of removal.
     """
-    terms_map = SortedMap.ref("terms")
+    terms_map = OrderedMap.ref("terms")
 
     # Check if term exists first.
-    response = await terms_map.get(context, key=term.lower())
+    response = await terms_map.search(context, key=term.lower())
 
-    if not response.HasField("value"):
+    if not response.found:
         return {
             "status": "error",
             "message": f"Term '{term}' not found",
@@ -150,7 +168,7 @@ async def remove_term(
     # Remove from alphabetical map.
     await terms_map.remove(
         context,
-        keys=[term.lower()],
+        key=term.lower(),
     )
 
     return {
@@ -178,7 +196,7 @@ async def list_terms(
     Returns:
         List of terms in alphabetical order.
     """
-    terms_map = SortedMap.ref("terms")
+    terms_map = OrderedMap.ref("terms")
 
     if start_with:
         # Range starting from prefix.
@@ -196,13 +214,13 @@ async def list_terms(
 
     terms = []
     for entry in response.entries:
-        term_data = json.loads(entry.value.decode("utf-8"))
+        term_entry = as_model(entry.value, TermEntry)
         terms.append({
-            "term": term_data["term"],
-            "definition": term_data["definition"][:100] + "..."
-                if len(term_data["definition"]) > 100
-                else term_data["definition"],
-            "category": term_data["category"],
+            "term": term_entry.term,
+            "definition": term_entry.definition[:100] + "..."
+                if len(term_entry.definition) > 100
+                else term_entry.definition,
+            "category": term_entry.category,
         })
 
     return {
@@ -231,7 +249,7 @@ async def browse_category(
     Returns:
         Terms in the specified category.
     """
-    terms_map = SortedMap.ref("terms")
+    terms_map = OrderedMap.ref("terms")
 
     # Get all terms and filter by category.
     # Note: In production, you'd use a separate category-indexed map.
@@ -242,12 +260,12 @@ async def browse_category(
 
     terms = []
     for entry in response.entries:
-        term_data = json.loads(entry.value.decode("utf-8"))
-        if term_data["category"] == category:
+        term_entry = as_model(entry.value, TermEntry)
+        if term_entry.category == category:
             terms.append({
-                "term": term_data["term"],
-                "definition": term_data["definition"],
-                "examples": term_data["examples"],
+                "term": term_entry.term,
+                "definition": term_entry.definition,
+                "examples": term_entry.examples,
             })
             if len(terms) >= limit:
                 break
@@ -278,7 +296,7 @@ async def recent_terms(
     Returns:
         Recently added terms in reverse chronological order.
     """
-    recent_map = SortedMap.ref("recent")
+    recent_map = OrderedMap.ref("recent")
 
     response = await recent_map.reverse_range(
         context,
@@ -287,14 +305,14 @@ async def recent_terms(
 
     terms = []
     for entry in response.entries:
-        term_data = json.loads(entry.value.decode("utf-8"))
+        term_entry = as_model(entry.value, TermEntry)
         terms.append({
-            "term": term_data["term"],
-            "definition": term_data["definition"][:100] + "..."
-                if len(term_data["definition"]) > 100
-                else term_data["definition"],
-            "category": term_data["category"],
-            "added_at": term_data["timestamp"],
+            "term": term_entry.term,
+            "definition": term_entry.definition[:100] + "..."
+                if len(term_entry.definition) > 100
+                else term_entry.definition,
+            "category": term_entry.category,
+            "added_at": term_entry.timestamp,
         })
 
     return {
@@ -313,7 +331,8 @@ async def search_terms(
     """
     Search for terms by prefix.
 
-    Demonstrates range query with start and end boundaries.
+    Demonstrates range query with client-side prefix filtering.
+    Note: OrderedMap.range() only supports start_key, not end_key.
 
     Args:
         prefix: Search prefix.
@@ -323,36 +342,32 @@ async def search_terms(
     Returns:
         Terms matching the prefix.
     """
-    terms_map = SortedMap.ref("terms")
+    terms_map = OrderedMap.ref("terms")
 
-    # Calculate end key for prefix range.
-    # For prefix "api", we want keys >= "api" and < "apj".
     start_key = prefix.lower()
-    # Increment last character for upper bound.
-    end_key = prefix[:-1] + chr(ord(prefix[-1]) + 1) if prefix else None
 
-    if end_key:
-        response = await terms_map.range(
-            context,
-            start_key=start_key,
-            end_key=end_key.lower(),
-            limit=limit,
-        )
-    else:
-        response = await terms_map.range(
-            context,
-            start_key=start_key,
-            limit=limit,
-        )
+    # Fetch more than limit to account for client-side filtering.
+    response = await terms_map.range(
+        context,
+        start_key=start_key,
+        limit=limit * 2,
+    )
 
     terms = []
     for entry in response.entries:
-        term_data = json.loads(entry.value.decode("utf-8"))
+        # Check if key still matches prefix.
+        if not entry.key.startswith(start_key):
+            break
+
+        term_entry = as_model(entry.value, TermEntry)
         terms.append({
-            "term": term_data["term"],
-            "definition": term_data["definition"],
-            "category": term_data["category"],
+            "term": term_entry.term,
+            "definition": term_entry.definition,
+            "category": term_entry.category,
         })
+
+        if len(terms) >= limit:
+            break
 
     return {
         "status": "success",
@@ -364,7 +379,7 @@ async def search_terms(
 
 async def main():
     """Start the technical glossary server."""
-    await mcp.application().run()
+    await mcp.application(servicers=ordered_map_servicers()).run()
 
 
 if __name__ == "__main__":
