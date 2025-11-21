@@ -32,11 +32,11 @@ EXAMPLES = {
     },
     "4": {
         "name": "document",
-        "description": "Document pipeline combining both patterns",
+        "description": "Document pipeline with OrderedMap + Pydantic",
     },
     "5": {
         "name": "define",
-        "description": "Technical glossary with SortedMap CRUD",
+        "description": "Technical glossary with OrderedMap CRUD",
     },
 }
 

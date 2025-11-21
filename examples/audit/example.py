@@ -5,7 +5,6 @@ Demonstrates both decorator and explicit audit logging patterns.
 """
 
 import asyncio
-import json
 import sys
 from pathlib import Path
 from typing import Any, Dict, Optional
@@ -15,7 +14,7 @@ api_path = Path(__file__).parent.parent.parent / "api"
 if api_path.exists():
     sys.path.insert(0, str(api_path))
 
-from audit import audit, timestamp_to_uuidv7
+from audit import AuditEntry, audit, timestamp_to_uuidv7
 from reboot.mcp.server import DurableMCP, DurableContext
 from reboot.std.collections.v1.sorted_map import SortedMap
 
@@ -114,7 +113,7 @@ async def get_audit_log(
     """
     audit_map = SortedMap.ref(f"audit:{log_name}")
 
-    # Build range query using UUIDv7 boundaries.
+    # Build range query using `UUIDv7` boundaries.
     if begin is not None and end is not None:
         # Range query: begin to end.
         begin_key = str(timestamp_to_uuidv7(begin))
@@ -151,11 +150,11 @@ async def get_audit_log(
             limit=limit,
         )
 
-    # Parse entries.
+    # Parse entries using Pydantic.
     entries = []
     for entry in response.entries:
-        data = json.loads(entry.value.decode("utf-8"))
-        entries.append(data)
+        audit_entry = AuditEntry.model_validate_json(entry.value)
+        entries.append(audit_entry.model_dump())
 
     return {
         "log_name": log_name,

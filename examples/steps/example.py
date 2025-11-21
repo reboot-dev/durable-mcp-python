@@ -6,10 +6,11 @@ each step should be idempotent and cached independently.
 """
 
 import asyncio
-import json
 import sys
 from pathlib import Path
 from typing import Any, Dict
+
+from pydantic import BaseModel
 
 # Add api/ to Python path for generated proto code.
 api_path = Path(__file__).parent.parent.parent / "api"
@@ -22,6 +23,22 @@ from reboot.std.collections.v1.sorted_map import SortedMap
 
 # Initialize MCP server.
 mcp = DurableMCP(path="/mcp")
+
+
+# Pydantic models for user and profile data.
+class UserData(BaseModel):
+    """User data model."""
+
+    username: str
+    email: str
+
+
+class ProfileData(BaseModel):
+    """Profile data model."""
+
+    user_id: str
+    bio: str = ""
+    avatar_url: str = ""
 
 
 @mcp.tool()
@@ -56,14 +73,11 @@ async def create_user_with_profile(
         users_map = SortedMap.ref("users")
         user_id = f"user_{hash(username) % 100000}"
 
-        # Store user data.
+        # Create Pydantic model and store user data.
+        user_data = UserData(username=username, email=email)
         await users_map.insert(
             context,
-            entries={
-                user_id: json.dumps(
-                    {"username": username, "email": email}
-                ).encode("utf-8")
-            },
+            entries={user_id: user_data.model_dump_json().encode("utf-8")},
         )
 
         return user_id
@@ -82,14 +96,15 @@ async def create_user_with_profile(
         profiles_map = SortedMap.ref("profiles")
         profile_id = f"profile_{user_id}"
 
-        # Store profile data.
+        # Create Pydantic model and store profile data.
+        profile_data = ProfileData(
+            user_id=user_id,
+            bio=bio,
+            avatar_url=avatar_url,
+        )
         await profiles_map.insert(
             context,
-            entries={
-                profile_id: json.dumps(
-                    {"user_id": user_id, "bio": bio, "avatar_url": avatar_url}
-                ).encode("utf-8")
-            },
+            entries={profile_id: profile_data.model_dump_json().encode("utf-8")},
         )
 
         return profile_id
@@ -131,9 +146,9 @@ async def get_user(
     if not response.HasField("value"):
         return {"status": "error", "message": "User not found"}
 
-    user_data = json.loads(response.value.decode("utf-8"))
+    user_data = UserData.model_validate_json(response.value)
 
-    return {"status": "success", "user": user_data}
+    return {"status": "success", "user": user_data.model_dump()}
 
 
 @mcp.tool()
@@ -157,9 +172,9 @@ async def get_profile(
     if not response.HasField("value"):
         return {"status": "error", "message": "Profile not found"}
 
-    profile_data = json.loads(response.value.decode("utf-8"))
+    profile_data = ProfileData.model_validate_json(response.value)
 
-    return {"status": "success", "profile": profile_data}
+    return {"status": "success", "profile": profile_data.model_dump()}
 
 
 async def main():

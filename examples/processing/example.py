@@ -6,11 +6,12 @@ retrying after certain errors could cause unintended side effects.
 """
 
 import asyncio
-import json
 import random
 import sys
 from pathlib import Path
 from typing import Any, Dict
+
+from pydantic import BaseModel
 
 # Add api/ to Python path for generated proto code.
 api_path = Path(__file__).parent.parent.parent / "api"
@@ -23,6 +24,17 @@ from reboot.std.collections.v1.sorted_map import SortedMap
 
 # Initialize MCP server.
 mcp = DurableMCP(path="/mcp")
+
+
+# Pydantic model for payment records.
+class PaymentRecord(BaseModel):
+    """Payment record model."""
+
+    transaction_id: str
+    amount: float
+    currency: str
+    description: str = ""
+    status: str
 
 
 class NetworkError(Exception):
@@ -126,20 +138,19 @@ async def process_payment(
         # Call external payment API.
         result = await simulate_payment_api(amount, currency, context)
 
-        # Store payment record.
+        # Create Pydantic model and store payment record.
         payment_id = result["transaction_id"]
+        payment_record = PaymentRecord(
+            transaction_id=payment_id,
+            amount=amount,
+            currency=currency,
+            description=description,
+            status=result["status"],
+        )
         await payments_map.insert(
             context,
             entries={
-                payment_id: json.dumps(
-                    {
-                        "transaction_id": payment_id,
-                        "amount": amount,
-                        "currency": currency,
-                        "description": description,
-                        "status": result["status"],
-                    }
-                ).encode("utf-8")
+                payment_id: payment_record.model_dump_json().encode("utf-8")
             },
         )
 
@@ -212,9 +223,9 @@ async def get_payment(
     if not response.HasField("value"):
         return {"status": "error", "message": "Payment not found"}
 
-    payment_data = json.loads(response.value.decode("utf-8"))
+    payment_record = PaymentRecord.model_validate_json(response.value)
 
-    return {"status": "success", "payment": payment_data}
+    return {"status": "success", "payment": payment_record.model_dump()}
 
 
 @mcp.tool()

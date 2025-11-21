@@ -1,13 +1,16 @@
 # Document Processing
 
-Document processing pipeline combining `at_least_once` and
-`at_most_once` patterns.
+Document processing pipeline combining `at_least_once` and `at_most_once` patterns with OrderedMap and Pydantic models.
 
 ## Overview
 
-Real-world workflows often need both idempotency patterns. Use
-`at_least_once` for idempotent operations (reads, storage) and
-`at_most_once` for operations with side effects (external APIs).
+Real-world workflows often need both idempotency patterns. Use `at_least_once` for idempotent operations (reads, storage) and `at_most_once` for operations with side effects (external APIs).
+
+This example demonstrates:
+- OrderedMap for durable storage
+- Pydantic models for type-safe data structures
+- `from_model()` / `as_model()` for serialization
+- Mixed idempotency patterns in a single workflow
 
 ## Workflow
 
@@ -19,9 +22,45 @@ Upload File -> Process Document
                |- Step 4: Store result (at_least_once)
 ```
 
-## Pattern
+## Pydantic Models
 
 ```python
+from pydantic import BaseModel
+
+class FileData(BaseModel):
+    """File data model."""
+    file_id: str
+    content: str
+    metadata: Dict[str, str] = {}
+
+class OCRResult(BaseModel):
+    """OCR processing result."""
+    job_id: str
+    step: str
+    text: str
+
+class TranslationResult(BaseModel):
+    """Translation processing result."""
+    job_id: str
+    step: str
+    text: str
+    language: str
+
+class JobResult(BaseModel):
+    """Final job result."""
+    job_id: str
+    file_id: str
+    target_language: str
+    status: str
+    result: str
+```
+
+## Pattern with OrderedMap + Pydantic
+
+```python
+from rebootdev.protobuf import from_model, as_model
+from reboot.std.collections.ordered_map.v1.ordered_map import OrderedMap
+
 @mcp.tool()
 async def process_document(
     file_id: str,
@@ -30,12 +69,19 @@ async def process_document(
 ) -> dict:
     """Process document through OCR and translation pipeline."""
 
+    files_map = OrderedMap.ref("files")
+    results_map = OrderedMap.ref("results")
+    jobs_map = OrderedMap.ref("jobs")
+
     # Step 1: Idempotent file lookup.
     async def get_file_metadata():
-        response = await files_map.get(context, key=file_id)
-        if not response.HasField("value"):
+        response = await files_map.search(context, key=file_id)
+        if not response.found:
             raise ValueError(f"File {file_id} not found")
-        return json.loads(response.value.decode("utf-8"))
+
+        # Deserialize with Pydantic.
+        file_data = as_model(response.value, FileData)
+        return file_data.model_dump()
 
     file_metadata = await at_least_once(
         f"get_file_{file_id}",
@@ -47,10 +93,17 @@ async def process_document(
     # Step 2: OCR (external API, at most once).
     async def perform_ocr():
         extracted_text = await simulate_ocr_api(file_metadata["content"])
-        # Store intermediate result with idempotency guard.
+
+        # Create Pydantic model and store with from_model().
+        ocr_result = OCRResult(
+            job_id=job_id,
+            step="ocr",
+            text=extracted_text,
+        )
         await results_map.idempotently(f"store_ocr_{job_id}").insert(
             context,
-            entries={...},
+            key=f"{job_id}_ocr",
+            value=from_model(ocr_result),
         )
         return extracted_text
 
@@ -75,10 +128,18 @@ async def process_document(
             ocr_text,
             target_language,
         )
-        # Store intermediate result with idempotency guard.
+
+        # Create Pydantic model and store.
+        translation_result = TranslationResult(
+            job_id=job_id,
+            step="translation",
+            text=translated_text,
+            language=target_language,
+        )
         await results_map.idempotently(f"store_translation_{job_id}").insert(
             context,
-            entries={...},
+            key=f"{job_id}_translation",
+            value=from_model(translation_result),
         )
         return translated_text
 
@@ -97,9 +158,20 @@ async def process_document(
     except QuotaExceededError as e:
         return {"status": "error", "step": "translation", "error": str(e)}
 
-    # Step 4: Idempotent final storage.
+    # Step 4: Store final result (idempotent write).
     async def store_job_result():
-        await jobs_map.insert(context, entries={job_id: ...})
+        job_result = JobResult(
+            job_id=job_id,
+            file_id=file_id,
+            target_language=target_language,
+            status="completed",
+            result=translated_text,
+        )
+        await jobs_map.insert(
+            context,
+            key=job_id,
+            value=from_model(job_result),
+        )
         return job_id
 
     final_job_id = await at_least_once(
@@ -112,191 +184,58 @@ async def process_document(
     return {"status": "success", "job_id": final_job_id}
 ```
 
-## Pattern Selection
-
-| Operation | Pattern | Reason |
-|-----------|---------|--------|
-| File lookup | `at_least_once` | Idempotent read |
-| OCR API call | `at_most_once` | External API side effects |
-| Translation API | `at_most_once` | External API quota |
-| Store result | `at_least_once` | Idempotent write |
-
 ## Error Handling
 
-### For at_most_once Steps
+### Retryable Errors
+- `NetworkError`: Temporary network issues (API timeouts)
+- Handled by `at_most_once` with automatic retry
 
-Each external API call needs three exception handlers:
+### Non-Retryable Errors
+- `InvalidDocumentError`: Document format not supported
+- `QuotaExceededError`: API quota exceeded
+- Caught and returned as error responses
 
-```python
-try:
-    result = await at_most_once(
-        "operation",
-        context,
-        operation_func,
-        type=str,
-        retryable_exceptions=[NetworkError],
-    )
-except NetworkError:
-    # Retryable error after retries exhausted.
-    return {"status": "error", "retryable": True}
-except AtMostOnceFailedBeforeCompleting:
-    # Previous attempt failed with non-retryable error.
-    return {"status": "error", "retryable": False}
-except (InvalidDocumentError, QuotaExceededError) as e:
-    # First attempt with non-retryable error.
-    return {"status": "error", "message": str(e)}
-```
+## Idempotency Guards
 
-### For at_least_once Steps
+### at_least_once
+- Used for: File reads, result storage
+- Behavior: Caches return value, retries until success
+- Ideal for: Idempotent operations that should eventually complete
 
-Let exceptions propagate (they'll cause workflow retry):
+### at_most_once
+- Used for: External API calls (OCR, translation)
+- Behavior: Executes at most once, even if retried
+- Ideal for: Operations with side effects (charges, state changes)
 
-```python
-# No try/except needed - idempotent operations can safely retry.
-result = await at_least_once(
-    "operation",
-    context,
-    operation_func,
-    type=dict,
-)
-```
+### Combined Pattern
+The `.idempotently()` modifier on `insert()` ensures intermediate results are stored exactly once, even if the enclosing `at_most_once` block retries.
 
-## Multiple Operations on Same SortedMap
+## Registering Servicers
 
-When calling a method on the **same named SortedMap** multiple times
-within the same context, use `.idempotently()` with a unique alias for
-each call:
+OrderedMap requires servicer registration:
 
 ```python
-# Inside an `at_most_once` or `at_least_once` callable:
-async def perform_operation():
-    results_map = SortedMap.ref("results")
-
-    # First insert on "results" map.
-    await results_map.idempotently("store_step1").insert(
-        context,
-        entries={key1: value1},
-    )
-
-    # Second insert on same "results" map - needs different alias.
-    await results_map.idempotently("store_step2").insert(
-        context,
-        entries={key2: value2},
-    )
-
-    return result
-```
-
-Without `.idempotently()`, the second call raises:
-
-```
-ValueError: To call 'rbt.std.collections.v1.SortedMapMethods.Insert'
-of 'results' more than once using the same context an idempotency
-alias or key must be specified
-```
-
-**Different maps don't need idempotency guards:**
-
-```python
-# These are different named maps - no conflict.
-results_map = SortedMap.ref("results")
-jobs_map = SortedMap.ref("jobs")
-
-await results_map.insert(context, entries={...})  # Fine
-await jobs_map.insert(context, entries={...})     # Also fine
-```
-
-**For loop operations:**
-
-Use dynamic aliases when calling the same map in loops:
-
-```python
-items_map = SortedMap.ref("items")
-for i in range(5):
-    await items_map.idempotently(f"insert_item_{i}").insert(
-        context,
-        entries={f"item_{i}": data},
-    )
-```
-
-This pattern applies to all SortedMap methods (`insert`, `get`,
-`range`, `remove`) when called multiple times on the same named map
-within the same context.
-
-## Retry Scenarios
-
-### Network Error During OCR
-
-1. Step 1: File lookup succeeds
-2. Step 2: OCR API raises `NetworkError`
-3. `at_most_once` retries OCR
-4. OCR succeeds on retry
-5. Steps 3-4 proceed normally
-
-### Invalid Document Error
-
-1. Step 1: File lookup succeeds
-2. Step 2: OCR API raises `InvalidDocumentError`
-3. Exception propagates (not in `retryable_exceptions`)
-4. Tool returns error response
-
-### Tool Retry After OCR Success
-
-1. Initial call: Steps 1-2 succeed, network issue prevents response
-2. Tool retried by MCP framework
-3. Step 1: `at_least_once` returns cached file metadata
-4. Step 2: `at_most_once` returns cached OCR text
-5. Step 3: Translation proceeds
-
-## Best Practices
-
-Choose the right pattern for each step:
-
-```python
-# Good: Idempotent read uses `at_least_once`.
-data = await at_least_once("read", context, read_func, type=dict)
-
-# Good: External API uses `at_most_once`.
-result = await at_most_once(
-    "api",
-    context,
-    api_func,
-    type=str,
-    retryable_exceptions=[...],
+from reboot.std.collections.ordered_map.v1.ordered_map import (
+    OrderedMap,
+    servicers as ordered_map_servicers,
 )
 
-# Bad: Using `at_most_once` for idempotent read (unnecessary).
-data = await at_most_once("read", context, read_func, type=dict)
+async def main():
+    await mcp.application(servicers=ordered_map_servicers()).run()
 ```
 
-Store intermediate results:
+## Benefits
 
-```python
-async def expensive_operation():
-    result = await external_api()
-    # Store immediately so we don't lose it.
-    # Use `.idempotently()` if multiple SortedMap operations occur
-    # in the same context.
-    await results_map.idempotently("store_result").insert(
-        context,
-        entries={...},
-    )
-    return result
-```
+- Type Safety: Pydantic validates all intermediate results
+- Clear Errors: Each step has specific error types
+- Resumable: If translation fails, OCR doesn't re-run
+- Protobuf Integration: OrderedMap with `from_model` / `as_model`
+- Audit Trail: Intermediate results stored for debugging
 
-Use distinct aliases:
+## Use Case
 
-```python
-# Each step has unique alias.
-await at_least_once(f"get_file_{file_id}", ...)
-await at_most_once(f"ocr_{job_id}", ...)
-await at_most_once(f"translate_{job_id}", ...)
-await at_least_once(f"store_job_{job_id}", ...)
-```
-
-## Running
-
-```bash
-cd examples/document
-uv run python example.py
-```
+Perfect for workflows that:
+- Call external APIs with charges or side effects
+- Need to resume after partial failures
+- Require validation of intermediate results
+- Want type-safe data structures throughout

@@ -7,11 +7,12 @@ for document processing with external API calls and multi-step operations.
 
 import asyncio
 import hashlib
-import json
 import random
 import sys
 from pathlib import Path
 from typing import Any, Dict
+
+from pydantic import BaseModel
 
 # Add api/ to Python path for generated proto code.
 api_path = Path(__file__).parent.parent.parent / "api"
@@ -24,10 +25,50 @@ from reboot.aio.workflows import (
     AtMostOnceFailedBeforeCompleting,
 )
 from reboot.mcp.server import DurableMCP, DurableContext
-from reboot.std.collections.v1.sorted_map import SortedMap
+from reboot.std.collections.ordered_map.v1.ordered_map import (
+    OrderedMap,
+    servicers as ordered_map_servicers,
+)
+from rebootdev.protobuf import from_model, as_model
 
 # Initialize MCP server.
 mcp = DurableMCP(path="/mcp")
+
+
+# Pydantic models for document processing.
+class FileData(BaseModel):
+    """File data model."""
+
+    file_id: str
+    content: str
+    metadata: Dict[str, str] = {}
+
+
+class OCRResult(BaseModel):
+    """OCR processing result."""
+
+    job_id: str
+    step: str
+    text: str
+
+
+class TranslationResult(BaseModel):
+    """Translation processing result."""
+
+    job_id: str
+    step: str
+    text: str
+    language: str
+
+
+class JobResult(BaseModel):
+    """Final job result."""
+
+    job_id: str
+    file_id: str
+    target_language: str
+    status: str
+    result: str
 
 
 class NetworkError(Exception):
@@ -107,22 +148,22 @@ async def process_document(
     Returns:
         Processing result with job_id and status.
     """
-    files_map = SortedMap.ref("files")
-    results_map = SortedMap.ref("results")
-    jobs_map = SortedMap.ref("jobs")
+    files_map = OrderedMap.ref("files")
+    results_map = OrderedMap.ref("results")
+    jobs_map = OrderedMap.ref("jobs")
 
     # Generate job ID.
     job_id = f"job_{hashlib.md5(f'{file_id}_{target_language}'.encode()).hexdigest()[:12]}"
 
     # Step 1: Retrieve file metadata (idempotent read).
     async def get_file_metadata():
-        response = await files_map.get(context, key=file_id)
+        response = await files_map.search(context, key=file_id)
 
-        if not response.HasField("value"):
+        if not response.found:
             raise ValueError(f"File {file_id} not found")
 
-        file_data = json.loads(response.value.decode("utf-8"))
-        return file_data
+        file_data = as_model(response.value, FileData)
+        return file_data.model_dump()
 
     # Use `at_least_once` for idempotent file lookup.
     file_metadata = await at_least_once(
@@ -137,15 +178,17 @@ async def process_document(
         # Call OCR API.
         extracted_text = await simulate_ocr_api(file_metadata["content"])
 
-        # Store OCR result.
+        # Create Pydantic model and store OCR result.
         ocr_result_key = f"{job_id}_ocr"
+        ocr_result = OCRResult(
+            job_id=job_id,
+            step="ocr",
+            text=extracted_text,
+        )
         await results_map.idempotently(f"store_ocr_{job_id}").insert(
             context,
-            entries={
-                ocr_result_key: json.dumps(
-                    {"job_id": job_id, "step": "ocr", "text": extracted_text}
-                ).encode("utf-8")
-            },
+            key=ocr_result_key,
+            value=from_model(ocr_result),
         )
 
         return extracted_text
@@ -195,20 +238,18 @@ async def process_document(
             ocr_text, target_language
         )
 
-        # Store translation result.
+        # Create Pydantic model and store translation result.
         translation_result_key = f"{job_id}_translation"
+        translation_result = TranslationResult(
+            job_id=job_id,
+            step="translation",
+            text=translated_text,
+            language=target_language,
+        )
         await results_map.idempotently(f"store_translation_{job_id}").insert(
             context,
-            entries={
-                translation_result_key: json.dumps(
-                    {
-                        "job_id": job_id,
-                        "step": "translation",
-                        "text": translated_text,
-                        "language": target_language,
-                    }
-                ).encode("utf-8")
-            },
+            key=translation_result_key,
+            value=from_model(translation_result),
         )
 
         return translated_text
@@ -252,19 +293,17 @@ async def process_document(
 
     # Step 4: Store final job result (idempotent write).
     async def store_job_result():
+        job_result = JobResult(
+            job_id=job_id,
+            file_id=file_id,
+            target_language=target_language,
+            status="completed",
+            result=translated_text,
+        )
         await jobs_map.insert(
             context,
-            entries={
-                job_id: json.dumps(
-                    {
-                        "job_id": job_id,
-                        "file_id": file_id,
-                        "target_language": target_language,
-                        "status": "completed",
-                        "result": translated_text,
-                    }
-                ).encode("utf-8")
-            },
+            key=job_id,
+            value=from_model(job_result),
         )
         return job_id
 
@@ -302,19 +341,17 @@ async def upload_file(
     Returns:
         Upload confirmation.
     """
-    files_map = SortedMap.ref("files")
+    files_map = OrderedMap.ref("files")
 
+    file_data = FileData(
+        file_id=file_id,
+        content=content,
+        metadata=metadata or {},
+    )
     await files_map.insert(
         context,
-        entries={
-            file_id: json.dumps(
-                {
-                    "file_id": file_id,
-                    "content": content,
-                    "metadata": metadata or {},
-                }
-            ).encode("utf-8")
-        },
+        key=file_id,
+        value=from_model(file_data),
     )
 
     return {"status": "success", "file_id": file_id}
@@ -335,21 +372,21 @@ async def get_job_status(
     Returns:
         Job status and result if completed.
     """
-    jobs_map = SortedMap.ref("jobs")
+    jobs_map = OrderedMap.ref("jobs")
 
-    response = await jobs_map.get(context, key=job_id)
+    response = await jobs_map.search(context, key=job_id)
 
-    if not response.HasField("value"):
+    if not response.found:
         return {"status": "error", "message": "Job not found"}
 
-    job_data = json.loads(response.value.decode("utf-8"))
+    job_result = as_model(response.value, JobResult)
 
-    return {"status": "success", "job": job_data}
+    return {"status": "success", "job": job_result.model_dump()}
 
 
 async def main():
     """Start the document processing example server."""
-    await mcp.application().run()
+    await mcp.application(servicers=ordered_map_servicers()).run()
 
 
 if __name__ == "__main__":

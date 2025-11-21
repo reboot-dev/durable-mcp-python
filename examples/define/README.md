@@ -1,97 +1,128 @@
 # Technical Glossary
 
-Complete SortedMap CRUD reference using a technical glossary.
+Complete OrderedMap CRUD reference using a technical glossary with Pydantic models.
 
 ## Overview
 
-Demonstrates all SortedMap operations through a practical use case:
-maintaining a technical glossary with both alphabetical and
-chronological indexes.
+Demonstrates all OrderedMap operations with type-safe Pydantic models through a practical use case: maintaining a technical glossary with both alphabetical and chronological indexes.
 
-## SortedMap Operations
+## OrderedMap + Pydantic Pattern
+
+This example shows the **OrderedMap with protobuf Values** pattern:
+- Uses `OrderedMap` for durable key-value storage
+- Pydantic models for type safety and validation
+- `from_model()` / `as_model()` helpers for serialization
+
+## OrderedMap Operations
 
 | Operation | Method | Use Case |
 |-----------|--------|----------|
-| Insert | `insert(context, entries={...})` | Add terms |
-| Get | `get(context, key="...")` | Look up term |
+| Insert | `insert(context, key="...", value=...)` | Add terms |
+| Search | `search(context, key="...")` | Look up term |
 | Range | `range(context, start_key=..., limit=...)` | Browse alphabetically |
-| Range (bounded) | `range(context, start_key=..., end_key=..., limit=...)` | Prefix search |
 | Reverse Range | `reverse_range(context, limit=...)` | Recent additions |
-| Remove | `remove(context, keys=[...])` | Delete terms |
+| Remove | `remove(context, key="...")` | Delete terms |
 
 ## Architecture
 
-Two SortedMaps for different access patterns:
+### Pydantic Model
+
+```python
+from pydantic import BaseModel
+
+class TermEntry(BaseModel):
+    """Type-safe term entry."""
+    term: str
+    definition: str
+    category: str = "general"
+    examples: List[str] = []
+    timestamp: int
+```
+
+### Two OrderedMaps for Different Access Patterns
 
 ```python
 # Map 1: Alphabetical index (keyed by term name).
-terms_map = SortedMap.ref("terms")
-# Key: "api" -> Value: {"term": "API", "definition": "...", ...}
+terms_map = OrderedMap.ref("terms")
+# Key: "api" -> Value: `protobuf.Value(TermEntry)`.
 
-# Map 2: Chronological index (keyed by UUIDv7).
-recent_map = SortedMap.ref("recent")
-# Key: "018c1234-..." -> Value: {"term": "API", "definition": "...", ...}
+# Map 2: Chronological index (keyed by `UUIDv7`).
+recent_map = OrderedMap.ref("recent")
+# Key: "018c1234-..." -> Value: `protobuf.Value(TermEntry)`.
 ```
 
-## Usage
+## Usage Examples
 
-### Insert
+### Insert with Pydantic
 
-Add terms to both indexes:
+Add terms with type validation:
 
 ```python
+from rebootdev.protobuf import from_model
+
 @mcp.tool()
 async def add_term(
     term: str,
     definition: str,
     category: str = "general",
+    examples: List[str] = None,
     context: DurableContext = None,
-) -> dict:
+) -> Dict[str, Any]:
     """Add a technical term to the glossary."""
-    term_data = {
-        "term": term,
-        "definition": definition,
-        "category": category,
-        "timestamp": int(time.time() * 1000),
-    }
+    timestamp = int(time.time() * 1000)
 
-    # Insert into alphabetical map (keyed by term).
-    await terms_map.insert(
-        context,
-        entries={term.lower(): json.dumps(term_data).encode("utf-8")},
+    # Create Pydantic model instance.
+    term_entry = TermEntry(
+        term=term,
+        definition=definition,
+        category=category,
+        examples=examples or [],
+        timestamp=timestamp,
     )
 
-    # Insert into chronological map (keyed by UUIDv7).
+    # Insert into alphabetical map using `from_model()`.
+    await terms_map.insert(
+        context,
+        key=term.lower(),
+        value=from_model(term_entry),
+    )
+
+    # Insert into chronological map.
     recent_key = str(uuid7())
     await recent_map.insert(
         context,
-        entries={recent_key: json.dumps(term_data).encode("utf-8")},
+        key=recent_key,
+        value=from_model(term_entry),
     )
 
     return {"status": "success", "term": term}
 ```
 
-### Get
+### Search with Pydantic
 
-Point lookup for term definition:
+Point lookup with type-safe deserialization:
 
 ```python
+from rebootdev.protobuf import as_model
+
 @mcp.tool()
 async def define(
     term: str,
     context: DurableContext = None,
-) -> dict:
+) -> Dict[str, Any]:
     """Look up a term's definition."""
-    response = await terms_map.get(context, key=term.lower())
+    response = await terms_map.search(context, key=term.lower())
 
-    if not response.HasField("value"):
+    if not response.found:
         return {"status": "error", "message": "Term not found"}
 
-    term_data = json.loads(response.value.decode("utf-8"))
-    return {"status": "success", "term": term_data}
+    # Convert protobuf `Value` to Pydantic model.
+    term_entry = as_model(response.value, TermEntry)
+
+    return {"status": "success", "term": term_entry.model_dump()}
 ```
 
-### Range
+### Range Query
 
 Browse terms alphabetically:
 
@@ -101,348 +132,113 @@ async def list_terms(
     start_with: str = "",
     limit: int = 50,
     context: DurableContext = None,
-) -> dict:
+) -> Dict[str, Any]:
     """List terms alphabetically."""
-    if start_with:
-        # Range starting from prefix.
-        response = await terms_map.range(
-            context,
-            start_key=start_with.lower(),
-            limit=limit,
-        )
-    else:
-        # Range from beginning.
-        response = await terms_map.range(
-            context,
-            limit=limit,
-        )
-
-    # Parse and return entries.
-    # ...
-```
-
-### Range (Bounded)
-
-Prefix search with start and end boundaries:
-
-```python
-@mcp.tool()
-async def search_terms(
-    prefix: str,
-    limit: int = 20,
-    context: DurableContext = None,
-) -> dict:
-    """Search for terms by prefix."""
-    # Calculate end key for prefix range.
-    start_key = prefix.lower()
-    # Increment last character for upper bound.
-    end_key = prefix[:-1] + chr(ord(prefix[-1]) + 1)
-
     response = await terms_map.range(
         context,
-        start_key=start_key,
-        end_key=end_key.lower(),
+        start_key=start_with.lower() if start_with else None,
         limit=limit,
     )
 
-    # Parse and return entries.
-    # ...
+    terms = []
+    for entry in response.entries:
+        # Deserialize each entry using `as_model()`.
+        term_entry = as_model(entry.value, TermEntry)
+        terms.append({
+            "term": term_entry.term,
+            "definition": term_entry.definition[:100] + "..."
+                if len(term_entry.definition) > 100
+                else term_entry.definition,
+            "category": term_entry.category,
+        })
+
+    return {"status": "success", "count": len(terms), "terms": terms}
 ```
 
 ### Reverse Range
 
-Get recently added terms (UUIDv7 keys):
+Get recently added terms:
 
 ```python
 @mcp.tool()
 async def recent_terms(
     limit: int = 20,
     context: DurableContext = None,
-) -> dict:
-    """Get recently added terms."""
+) -> Dict[str, Any]:
+    """Get recently added terms (newest first)."""
     response = await recent_map.reverse_range(
         context,
         limit=limit,
     )
 
-    # Parse and return entries (newest first).
-    # ...
+    terms = []
+    for entry in response.entries:
+        term_entry = as_model(entry.value, TermEntry)
+        terms.append({
+            "term": term_entry.term,
+            "definition": term_entry.definition[:100] + "...",
+            "category": term_entry.category,
+            "added_at": term_entry.timestamp,
+        })
+
+    return {"status": "success", "count": len(terms), "recent_terms": terms}
 ```
 
 ### Remove
 
-Delete terms from glossary:
+Delete a term:
 
 ```python
 @mcp.tool()
 async def remove_term(
     term: str,
     context: DurableContext = None,
-) -> dict:
+) -> Dict[str, Any]:
     """Remove a term from the glossary."""
-    # Check if term exists first.
-    response = await terms_map.get(context, key=term.lower())
+    # Check if term exists.
+    response = await terms_map.search(context, key=term.lower())
 
-    if not response.HasField("value"):
+    if not response.found:
         return {"status": "error", "message": "Term not found"}
 
     # Remove from alphabetical map.
-    await terms_map.remove(
-        context,
-        keys=[term.lower()],
-    )
+    await terms_map.remove(context, key=term.lower())
 
     return {"status": "success", "message": f"Removed '{term}'"}
 ```
 
-## Key Concepts
+## Registering OrderedMap Servicers
 
-### Point Lookup with get()
-
-Single key retrieval:
+**Important**: OrderedMap requires servicer registration:
 
 ```python
-response = await terms_map.get(context, key="api")
-
-if not response.HasField("value"):
-    # Key not found.
-    return {"error": "Not found"}
-
-# Key found.
-data = json.loads(response.value.decode("utf-8"))
-```
-
-Returns `GetResponse` with optional `value` field.
-
-### Range Queries
-
-Ascending order traversal:
-
-```python
-# All keys from "api" onwards.
-response = await terms_map.range(
-    context,
-    start_key="api",
-    limit=50,
+from reboot.std.collections.ordered_map.v1.ordered_map import (
+    OrderedMap,
+    servicers as ordered_map_servicers,
 )
 
-# Keys from "api" to "apz" (exclusive).
-response = await terms_map.range(
-    context,
-    start_key="api",
-    end_key="apz",
-    limit=50,
-)
-
-# First 50 keys in map.
-response = await terms_map.range(
-    context,
-    limit=50,
-)
+async def main():
+    await mcp.application(servicers=ordered_map_servicers()).run()
 ```
 
-Parameters:
+## Benefits of OrderedMap + Pydantic
 
-- `start_key`: Inclusive lower bound (optional)
-- `end_key`: Exclusive upper bound (optional)
-- `limit`: Maximum entries to return (required)
+- Type Safety: Pydantic validates all data structures
+- Clean API: `from_model()` / `as_model()` are explicit and readable
+- IDE Support: Full autocomplete with `term_entry.field`
+- Protobuf Integration: Works seamlessly with protobuf Values
+- Validation: Catch errors at serialization boundaries
 
-Returns `RangeResponse` with `entries` list.
+## When to Use OrderedMap vs SortedMap
 
-### Reverse Range
+**Use OrderedMap when:**
+- You want protobuf Value integration
+- Type safety with Pydantic is important
+- You need the `from_model` / `as_model` pattern
 
-Descending order traversal (largest to smallest keys):
+**Use SortedMap when:**
+- You prefer working with raw bytes
+- You need batch operations (`entries={...}`)
+- Simplicity is preferred over type safety
 
-```python
-# Get 20 most recent entries (UUIDv7 keys are time-ordered).
-response = await recent_map.reverse_range(
-    context,
-    limit=20,
-)
-
-# Keys from "z" down to "m" (exclusive).
-response = await terms_map.reverse_range(
-    context,
-    start_key="z",
-    end_key="m",
-    limit=50,
-)
-```
-
-Use cases: Recent items, reverse alphabetical browsing.
-
-### UUIDv7 for Time Ordering
-
-UUIDv7 embeds timestamp in first 48 bits:
-
-```python
-from uuid7 import create as uuid7
-
-# Generate time-ordered key.
-key = str(uuid7())  # "018c1234-5678-7abc-9012-3456789abcdef"
-
-# Later keys sort after earlier keys.
-key1 = str(uuid7())  # At time T1.
-time.sleep(0.1)
-key2 = str(uuid7())  # At time T2.
-# key1 < key2 (lexicographically)
-```
-
-Benefits: Natural chronological sorting, no collisions, works with
-`reverse_range()` for recent items.
-
-### Prefix Search Pattern
-
-Find all keys starting with prefix "api":
-
-```python
-prefix = "api"
-start_key = prefix.lower()
-# Increment last character to get exclusive upper bound.
-end_key = prefix[:-1] + chr(ord(prefix[-1]) + 1)  # "api" -> "apj"
-
-response = await terms_map.range(
-    context,
-    start_key=start_key,
-    end_key=end_key,
-    limit=100,
-)
-```
-
-Works because SortedMap uses lexicographic ordering.
-
-## Best Practices
-
-Always check `HasField("value")` for `get()`:
-
-```python
-# Correct.
-response = await map.get(context, key="term")
-if not response.HasField("value"):
-    return {"error": "Not found"}
-
-# Wrong (will raise AttributeError if value is unset).
-if not response.value:
-    pass
-```
-
-Use `limit` parameter for `range()` queries:
-
-```python
-# Required - limit prevents unbounded results.
-response = await map.range(context, limit=100)
-
-# Error - limit is required.
-response = await map.range(context)
-```
-
-Lowercase keys for case-insensitive lookup while preserving original
-capitalization:
-
-```python
-# Store original term in data, use lowercase for key.
-term_data = {
-    "term": term,  # Preserves "gRPC", "Kubernetes", etc.
-    "definition": definition,
-    # ...
-}
-
-await terms_map.insert(
-    context,
-    entries={term.lower(): json.dumps(term_data).encode("utf-8")},
-)
-
-# Lookup with lowercase (case-insensitive).
-response = await terms_map.get(context, key=term.lower())
-# Returns: {"term": "gRPC", ...} regardless of input case
-```
-
-This allows lookups like `define("grpc")`, `define("GRPC")`, and
-`define("gRPC")` to all return the same term with its original
-capitalization.
-
-## Common Patterns
-
-### Recent Items with UUIDv7
-
-```python
-# Store with UUIDv7 keys for time ordering.
-recent_map = SortedMap.ref("recent")
-await recent_map.insert(
-    context,
-    entries={str(uuid7()): data},
-)
-
-# Get N most recent.
-response = await recent_map.reverse_range(context, limit=10)
-```
-
-### Dual Indexing
-
-```python
-# Primary index: optimized for lookups.
-terms_map = SortedMap.ref("terms")
-await terms_map.insert(context, entries={term.lower(): data})
-
-# Secondary index: optimized for chronological access.
-recent_map = SortedMap.ref("recent")
-await recent_map.insert(context, entries={str(uuid7()): data})
-```
-
-### Batch Operations
-
-```python
-# Insert multiple entries at once (single call).
-await terms_map.insert(
-    context,
-    entries={
-        "api": json.dumps({...}).encode("utf-8"),
-        "rest": json.dumps({...}).encode("utf-8"),
-        "grpc": json.dumps({...}).encode("utf-8"),
-    },
-)
-
-# Remove multiple keys at once (single call).
-await terms_map.remove(
-    context,
-    keys=["api", "rest", "grpc"],
-)
-```
-
-### Multiple Operations on Same Map
-
-When calling methods on the same named SortedMap multiple times within
-the same context, use `.idempotently()` with unique aliases:
-
-```python
-# Multiple inserts on same map require idempotency guards.
-terms_map = SortedMap.ref("terms")
-
-await terms_map.idempotently("insert_api").insert(
-    context,
-    entries={"api": data1},
-)
-
-await terms_map.idempotently("insert_rest").insert(
-    context,
-    entries={"rest": data2},
-)
-```
-
-Different named maps don't require guards:
-
-```python
-# These are different maps - no conflict.
-terms_map = SortedMap.ref("terms")
-recent_map = SortedMap.ref("recent")
-
-await terms_map.insert(context, entries={...})  # Fine
-await recent_map.insert(context, entries={...}) # Also fine
-```
-
-## Running
-
-```bash
-cd examples/define
-uv run python example.py
-```
+See other examples for SortedMap + Pydantic pattern (audit, steps, processing).

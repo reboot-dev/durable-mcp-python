@@ -79,14 +79,14 @@ async def add_term(
         timestamp=timestamp,
     )
 
-    # Insert into alphabetical map (keyed by term).
+    # Insert into alphabetical map (keyed by `term`).
     await terms_map.insert(
         context,
         key=term.lower(),
         value=from_model(term_entry),
     )
 
-    # Insert into chronological map (keyed by UUIDv7).
+    # Insert into chronological map (keyed by `UUIDv7`).
     recent_key = str(uuid7())
     await recent_map.insert(
         context,
