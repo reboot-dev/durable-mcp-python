@@ -6,6 +6,7 @@ import logging
 import mcp.types
 import pickle
 from dataclasses import dataclass
+from google.protobuf import struct_pb2
 from log.log import get_logger, set_log_level
 from mcp.server import fastmcp
 from mcp.server.auth.middleware.auth_context import (
@@ -39,27 +40,23 @@ from mcp.shared.message import ServerMessageMetadata
 from rbt.mcp.v1.session_rbt import Session
 from rbt.v1alpha1.errors_pb2 import StateNotConstructed
 from reboot.aio.applications import Application
-from rebootdev.aio.servicers import Servicer
 from reboot.aio.contexts import EffectValidation, WorkflowContext
 from reboot.aio.external import ExternalContext, InitializeContext
 from reboot.aio.types import StateRef
 from reboot.aio.workflows import at_least_once
 from reboot.mcp.event_store import (
     DurableEventStore,
-    replay,
     qualified_stream_id,
+    replay,
 )
-from reboot.protobuf import from_model
-from google.protobuf import struct_pb2
-from reboot.mcp.servicers.session import (
-    SessionServicer,
-    _servers,
-    _context,
-)
+from reboot.mcp.patch import DurableFunctionResource, patch_get_resource
+from reboot.mcp.servicers.session import SessionServicer, _context, _servers
 from reboot.mcp.servicers.stream import StreamServicer
+from reboot.protobuf import from_model
 from reboot.std.collections.v1 import sorted_map
-from rebootdev.aio.headers import SERVER_ID_HEADER, STATE_REF_HEADER
 from rebootdev.aio.backoff import Backoff
+from rebootdev.aio.headers import SERVER_ID_HEADER, STATE_REF_HEADER
+from rebootdev.aio.servicers import Servicer
 from rebootdev.memoize.v1.memoize_rbt import Memoize
 from rebootdev.settings import DOCS_BASE_URL
 from starlette.applications import Starlette
@@ -76,6 +73,10 @@ from uuid import uuid4, uuid5
 from uuid7 import create as uuid7  # type: ignore[import-untyped]
 
 logger = get_logger(__name__)
+
+# Patch FastMCP's `ResourceManager.get_resource()` to support context injection
+# in regular resources and fix the empty dict bug in template matching.
+patch_get_resource()
 
 
 class DurableSession:
@@ -693,25 +694,52 @@ def _streamable_http_app(
         token_verifier=token_verifier,
     )
 
+    # Register resources with context injection support.
+    # Fixed URIs use `DurableFunctionResource` (regular resources).
+    # Parameterized URIs use `ResourceTemplate` (templates).
     for resource in resources:
-        mcp.resource(
-            resource.uri,
-            name=resource.name,
-            title=resource.title,
-            description=resource.description,
-            mime_type=resource.mime_type,
-        )(resource.fn)
+        wrapped_fn = _wrap_with_durable_context(resource.fn)
+        has_uri_params = "{" in resource.uri and "}" in resource.uri
 
+        if has_uri_params:
+            # Use decorator for parameterized URIs (registers as template).
+            mcp.resource(
+                resource.uri,
+                name=resource.name,
+                title=resource.title,
+                description=resource.description,
+                mime_type=resource.mime_type,
+            )(wrapped_fn)
+        else:
+            # Use custom resource class for fixed URIs (regular resources).
+            # Context parameter is auto-detected from wrapped_fn.
+            durable_resource = DurableFunctionResource(
+                uri=resource.uri,
+                name=resource.name or wrapped_fn.__name__,
+                title=resource.title,
+                description=resource.description or wrapped_fn.__doc__ or "",
+                mime_type=resource.mime_type or "text/plain",
+                fn=wrapped_fn,
+            )
+            mcp.add_resource(durable_resource)
+
+    # Register prompts using add_prompt() for consistency with add_tool().
+    # Prompt.from_function() automatically detects and handles the `ctx`
+    # context parameter.
     for prompt in prompts:
-        mcp.prompt(
+        wrapped_fn = _wrap_with_durable_context(prompt.func)
+        from mcp.server.fastmcp.prompts import Prompt as FastMCPPrompt
+        prompt_obj = FastMCPPrompt.from_function(
+            fn=wrapped_fn,
             name=prompt.name,
             title=prompt.title,
             description=prompt.description,
-        )(prompt.func)
+        )
+        mcp.add_prompt(prompt_obj)
 
     for tool in tools:
         mcp.add_tool(
-            _wrap_tool(tool.fn),
+            _wrap_with_durable_context(tool.fn),
             name=tool.name,
             title=tool.title,
             description=tool.description,
@@ -756,7 +784,16 @@ def _streamable_http_app(
     )
 
 
-def _wrap_tool(fn: mcp.types.AnyFunction) -> mcp.types.AnyFunction:
+def _wrap_with_durable_context(fn: mcp.types.AnyFunction) -> mcp.types.AnyFunction:
+    """
+    Common wrapper that adds `DurableContext` to tools, resources, and prompts.
+
+    The wrapper detects `DurableContext` parameters in the function signature,
+    retrieves `WorkflowContext` from the context variable when called, transforms
+    it to `DurableContext`, and injects all durable methods including progress
+    reporting, logging, and elicitation. The original function is called with
+    the injected context and effects are validated if enabled.
+    """
     signature = inspect.signature(fn)
 
     wrapper_parameters = [
@@ -1111,6 +1148,17 @@ def _wrap_tool(fn: mcp.types.AnyFunction) -> mcp.types.AnyFunction:
     setattr(wrapper_validating_effects, "__signature__", wrapper_signature)
     wrapper_validating_effects.__name__ = fn.__name__
     wrapper_validating_effects.__doc__ = fn.__doc__
+
+    # Build annotations dict from signature so `typing.get_type_hints()` and
+    # `find_context_parameter()` can properly detect the context parameter.
+    annotations = {}
+    for param_name, param in wrapper_signature.parameters.items():
+        if param.annotation != inspect.Parameter.empty:
+            annotations[param_name] = param.annotation
+    if wrapper_signature.return_annotation != inspect.Signature.empty:
+        annotations["return"] = wrapper_signature.return_annotation
+
+    wrapper_validating_effects.__annotations__ = annotations
 
     return wrapper_validating_effects
 

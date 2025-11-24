@@ -227,6 +227,7 @@ you automatically.
 
 ### Supported client --> server _requests_:
 - [x] `initialize`
+- [ ] `ping`
 - [x] `tools/call`
 - [x] `tools/list`
 - [x] `prompts/get`
