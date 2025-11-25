@@ -42,7 +42,15 @@ class TestSomething(unittest.IsolatedAsyncioTestCase):
             self.rbt.url() + "/mcp",
             terminate_on_close=False,
         ) as (session, session_id, protocol_version):
-            print(await session.list_resources())
+            resources = await session.list_resources()
+            templates = await session.list_resource_templates()
+            print("Resources:", resources)
+            print("Templates:", templates)
+
+            # Verify fixed URI appears as regular resource, not template.
+            assert len(resources.resources) == 1
+            assert resources.resources[0].uri == AnyUrl("config://settings")
+            assert len(templates.resourceTemplates) == 0
 
         print(f"Rebooting application running at {self.rbt.url()}...")
 
@@ -60,7 +68,10 @@ class TestSomething(unittest.IsolatedAsyncioTestCase):
             # modelcontextprotocol.io/specification/2025-06-18/basic#requests
             next_request_id=session._request_id,
         ) as session:
-            print(await session.read_resource(AnyUrl("config://settings")))
+            result = await session.read_resource(AnyUrl("config://settings"))
+            print(result)
+            assert len(result.contents) == 1
+            assert "dark" in result.contents[0].text
 
 
 if __name__ == '__main__':
