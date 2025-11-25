@@ -35,11 +35,12 @@ class DurableFunctionResource(FunctionResource):
 
     context_kwarg: str | None = None
 
-    def __init__(self, **data):
-        super().__init__(**data)
-        # Auto-detect context parameter from function.
-        if self.context_kwarg is None and self.fn is not None:
-            self.context_kwarg = find_context_parameter(self.fn)
+    def __init__(self, **kwargs):
+        super().__init__(**kwargs)
+        # Find the `fastmcp.Context` parameter by type annotation (not name).
+        # Our wrapper `_wrap_with_durable_context()` adds `ctx: fastmcp.Context`,
+        # so this returns "ctx".
+        self.context_kwarg = find_context_parameter(self.fn)
 
 
 def patch_get_resource() -> None:
@@ -47,15 +48,9 @@ def patch_get_resource() -> None:
 
     This function should be called once at module initialization time before
     any FastMCP instances are created.
-    """
-    _patch_resource_manager_get_resource()
 
-
-def _patch_resource_manager_get_resource() -> None:
-    """Patch `ResourceManager.get_resource()` for context injection and bug fixes.
-
-    This patch serves two purposes:
-    1. Enable context injection for regular resources via `DurableFunctionResource`
+    The patch serves two purposes:
+    1. Enable context injection for regular resources via `DurableFunctionResource`.
     2. Fix FastMCP bug where `if params := template.matches(uri)` evaluates to
        `False` when `params` is an empty dict for fixed URIs with no URI
        parameters, since empty dicts are falsy in Python.

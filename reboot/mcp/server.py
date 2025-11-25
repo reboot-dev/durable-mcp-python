@@ -693,10 +693,14 @@ def _streamable_http_app(
     # Parameterized URIs use `ResourceTemplate` (templates).
     for resource in resources:
         wrapped_fn = _wrap_with_durable_context(resource.fn)
-        has_uri_params = "{" in resource.uri and "}" in resource.uri
+        # If the URI has parameters, e.g., includes `{` and `}`, then it is a
+        # template resource.
+        is_template_resource = "{" in resource.uri and "}" in resource.uri
 
-        if has_uri_params:
+        if is_template_resource:
             # Use decorator for parameterized URIs (registers as template).
+            # FastMCP's `ResourceTemplate.from_function()` auto-detects the context
+            # parameter from `wrapped_fn` using `find_context_parameter()`.
             mcp.resource(
                 resource.uri,
                 name=resource.name,
@@ -706,8 +710,12 @@ def _streamable_http_app(
             )(wrapped_fn)
         else:
             # Use custom resource class for fixed URIs (regular resources).
-            # Context parameter is auto-detected from wrapped_fn.
-            durable_resource = DurableFunctionResource(
+            # `DurableFunctionResource.__init__()` auto-detects the context
+            # parameter from `wrapped_fn` using `find_context_parameter()`.
+            # Apply same fallbacks as `FunctionResource.from_function()` for
+            # consistency: name defaults to function name, description to docstring,
+            # mime_type to "text/plain".
+            wrapped_resource = DurableFunctionResource(
                 uri=resource.uri,
                 name=resource.name or wrapped_fn.__name__,
                 title=resource.title,
@@ -715,21 +723,20 @@ def _streamable_http_app(
                 mime_type=resource.mime_type or "text/plain",
                 fn=wrapped_fn,
             )
-            mcp.add_resource(durable_resource)
+            mcp.add_resource(wrapped_resource)
 
     # Register prompts using add_prompt() for consistency with add_tool().
-    # Prompt.from_function() automatically detects and handles the `ctx`
-    # context parameter.
+    # FastMCP's `Prompt.from_function()` automatically detects and handles the
+    # `ctx` context parameter.
     for prompt in prompts:
         wrapped_fn = _wrap_with_durable_context(prompt.func)
-        from mcp.server.fastmcp.prompts import Prompt as FastMCPPrompt
-        prompt_obj = FastMCPPrompt.from_function(
+        wrapped_prompt = fastmcp.prompts.Prompt.from_function(
             fn=wrapped_fn,
             name=prompt.name,
             title=prompt.title,
             description=prompt.description,
         )
-        mcp.add_prompt(prompt_obj)
+        mcp.add_prompt(wrapped_prompt)
 
     for tool in tools:
         mcp.add_tool(

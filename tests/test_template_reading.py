@@ -9,17 +9,18 @@ from reboot.mcp.server import DurableContext, DurableMCP
 mcp = DurableMCP(path="/mcp")
 
 
-@mcp.resource("template://with-context")
-def template_with_context(context: DurableContext) -> str:
-    """Test resource registered as template due to context param."""
+@mcp.resource("resource://fixed")
+def fixed_resource(context: DurableContext) -> str:
+    """Fixed URI resource with context (regular resource, not template)."""
     assert context is not None
-    return "with-context-data"
+    return "fixed-resource-data"
 
 
-@mcp.resource("template://no-params")
-def template_no_params() -> str:
-    """Test resource with no params (should be regular resource, not template)."""
-    return "no-params-data"
+@mcp.resource("resource://template/{id}")
+def template_resource(id: str, context: DurableContext) -> str:
+    """Parameterized URI resource with context (template)."""
+    assert context is not None
+    return f"template-resource-data-{id}"
 
 
 # Reboot application that runs everything necessary for `DurableMCP`.
@@ -36,49 +37,38 @@ class TestTemplateReading(unittest.IsolatedAsyncioTestCase):
         await self.rbt.stop()
 
     async def test_template_list_and_read(self) -> None:
-        """Verify that resources with context-only params work as templates."""
+        """Verify that fixed URIs become resources and parameterized URIs become templates."""
         revision = await self.rbt.up(application)
 
         async with connect(
             self.rbt.url() + "/mcp",
             terminate_on_close=False,
         ) as (session, session_id, protocol_version):
-            # Check resources/list (should be empty).
+            # Check resources/list - should have the fixed URI resource.
             resources_result = await session.list_resources()
             print(f"Resources: {resources_result}")
+            assert len(resources_result.resources) == 1
+            assert resources_result.resources[0].uri == AnyUrl("resource://fixed")
 
-            # Check resources/templates/list (should have our template).
+            # Check resources/templates/list - should have the parameterized resource.
             templates_result = await session.list_resource_templates()
             print(f"Templates: {templates_result}")
-            if templates_result.resourceTemplates:
-                for template in templates_result.resourceTemplates:
-                    print(
-                        f"Template: name={template.name}, uriTemplate={template.uriTemplate}"
-                    )
+            assert len(templates_result.resourceTemplates) == 1
+            assert templates_result.resourceTemplates[0].uriTemplate == "resource://template/{id}"
 
-            # Try to read the resource with no params (should work as regular resource).
-            print("\nReading template://no-params...")
-            try:
-                read_result = await session.read_resource(
-                    AnyUrl("template://no-params")
-                )
-                print(f"Read result (no-params): {read_result}")
-                assert len(read_result.contents) == 1
-                assert "no-params-data" in read_result.contents[0].text
-            except Exception as e:
-                print(f"Failed to read no-params: {e}")
+            # Read the fixed resource.
+            print("\nReading resource://fixed...")
+            read_result = await session.read_resource(AnyUrl("resource://fixed"))
+            print(f"Read result (fixed): {read_result}")
+            assert len(read_result.contents) == 1
+            assert "fixed-resource-data" in read_result.contents[0].text
 
-            # Try to read the template with context param.
-            print("\nReading template://with-context...")
-            try:
-                read_result = await session.read_resource(
-                    AnyUrl("template://with-context")
-                )
-                print(f"Read result (with-context): {read_result}")
-                assert len(read_result.contents) == 1
-                assert "with-context-data" in read_result.contents[0].text
-            except Exception as e:
-                print(f"Failed to read with-context: {e}")
+            # Read the template resource with a parameter.
+            print("\nReading resource://template/123...")
+            read_result = await session.read_resource(AnyUrl("resource://template/123"))
+            print(f"Read result (template): {read_result}")
+            assert len(read_result.contents) == 1
+            assert "template-resource-data-123" in read_result.contents[0].text
 
 
 if __name__ == '__main__':

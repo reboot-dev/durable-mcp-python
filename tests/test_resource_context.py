@@ -1,7 +1,8 @@
 import asyncio
 import unittest
-from mcp import types
+from mcp import ClientSession, types
 from mcp.server.elicitation import AcceptedElicitation
+from mcp.shared.context import RequestContext
 from mcp.shared.message import ClientMessageMetadata
 from pydantic import AnyUrl, BaseModel
 from reboot.aio.applications import Application
@@ -121,13 +122,40 @@ class TestResourceContext(unittest.IsolatedAsyncioTestCase):
         """Test that resource can report progress."""
         revision = await self.rbt.up(application)
 
+        progress_event = asyncio.Event()
+
+        async def progress_callback(
+            progress: float,
+            total: float | None,
+            message: str | None,
+        ) -> None:
+            progress_event.set()
+
         async with connect(
             self.rbt.url() + "/mcp",
             terminate_on_close=False,
         ) as (session, session_id, protocol_version):
-            # Read resource that reports progress.
-            # Progress notifications are sent but we don't wait for them here.
-            result = await session.read_resource(AnyUrl("progress://data"))
+            # Read resource that reports progress, capturing the progress notification.
+            send_request_task = asyncio.create_task(
+                session.send_request(
+                    types.ClientRequest(
+                        types.ReadResourceRequest(
+                            method="resources/read",
+                            params=types.ReadResourceRequestParams(
+                                uri=AnyUrl("progress://data"),
+                            ),
+                        ),
+                    ),
+                    types.ReadResourceResult,
+                    progress_callback=progress_callback,
+                )
+            )
+
+            # Wait for progress notification to be received.
+            await progress_event.wait()
+
+            # Get the result.
+            result = await send_request_task
             assert len(result.contents) == 1
             assert "Processed data" in result.contents[0].text
 
@@ -135,39 +163,82 @@ class TestResourceContext(unittest.IsolatedAsyncioTestCase):
         """Test that resource can use logging methods."""
         revision = await self.rbt.up(application)
 
+        log_message_event = asyncio.Event()
+        received_log_message = None
+
+        async def message_handler(
+            message: types.ServerNotification | Exception,
+        ) -> None:
+            nonlocal received_log_message
+            if isinstance(message, types.ServerNotification):
+                if isinstance(message.root, types.LoggingMessageNotification):
+                    received_log_message = message.root.params.data
+                    log_message_event.set()
+
         async with connect(
             self.rbt.url() + "/mcp",
             terminate_on_close=False,
+            message_handler=message_handler,
         ) as (session, session_id, protocol_version):
-            # Test debug logging.
-            result = await session.read_resource(AnyUrl("logging://debug"))
+            # Test debug logging - capture the log message.
+            send_request_task = asyncio.create_task(
+                session.send_request(
+                    types.ClientRequest(
+                        types.ReadResourceRequest(
+                            method="resources/read",
+                            params=types.ReadResourceRequestParams(
+                                uri=AnyUrl("logging://debug"),
+                            ),
+                        ),
+                    ),
+                    types.ReadResourceResult,
+                )
+            )
+
+            # Wait for log message to be received.
+            await log_message_event.wait()
+
+            # Verify the log message.
+            assert received_log_message == "Debug message for debug"
+
+            # Get the result.
+            result = await send_request_task
             assert len(result.contents) == 1
             assert "Logged at debug" in result.contents[0].text
-
-            # Test info logging.
-            result = await session.read_resource(AnyUrl("logging://info"))
-            assert len(result.contents) == 1
-            assert "Logged at info" in result.contents[0].text
 
     async def test_resource_with_elicit(self) -> None:
         """Test that resource can elicit user input."""
         revision = await self.rbt.up(application)
 
-        # Mock elicitation response by responding to the server request.
-        async def handle_elicitation(session, session_id, protocol_version):
-            # This test would need proper elicitation handling from client.
-            # For now we just test that the resource can call elicit.
-            # Full elicitation testing is done in test_elicitation_create.py.
-            pass
+        elicitation_received = asyncio.Event()
+
+        async def elicitation_callback(
+            context: RequestContext[ClientSession, None],
+            params: types.ElicitRequestParams,
+        ):
+            assert "Do you want to proceed?" in params.message
+            elicitation_received.set()
+            # Respond with user confirmation.
+            return types.ElicitResult(
+                action="accept",
+                content={"confirmed": True, "reason": "Testing elicitation"}
+            )
 
         async with connect(
             self.rbt.url() + "/mcp",
             terminate_on_close=False,
+            elicitation_callback=elicitation_callback,
         ) as (session, session_id, protocol_version):
-            # Note: This will hang waiting for elicitation response.
-            # In production, client must respond to elicitation requests.
-            # For testing, we verify the structure is correct.
-            pass
+            # Call resource that will elicit.
+            result = await session.read_resource(AnyUrl("elicit://confirm"))
+
+            # Verify elicitation was received.
+            assert elicitation_received.is_set()
+
+            # Verify result includes elicited data.
+            assert len(result.contents) == 1
+            assert "User confirmed: True" in result.contents[0].text
+            assert "Testing elicitation" in result.contents[0].text
 
     async def test_sync_resource_with_context(self) -> None:
         """Test that synchronous resources work with DurableContext."""
@@ -182,15 +253,59 @@ class TestResourceContext(unittest.IsolatedAsyncioTestCase):
             assert result.contents[0].text == "sync-data"
 
     async def test_resource_survives_reboot(self) -> None:
-        """Test that resource context works after server reboot."""
+        """Test that resource with elicitation survives server reboot."""
         revision = await self.rbt.up(application)
+
+        elicitation_event = asyncio.Event()
+
+        async def elicitation_callback_before_reboot(
+            context: RequestContext[ClientSession, None],
+            params: types.ElicitRequestParams,
+        ):
+            assert "Do you want to proceed?" in params.message
+            elicitation_event.set()
+            # Wait until we get cancelled because of the reboot.
+            await asyncio.Event().wait()
+
+        last_event_id = None
 
         async with connect(
             self.rbt.url() + "/mcp",
             terminate_on_close=False,
+            elicitation_callback=elicitation_callback_before_reboot,
         ) as (session, session_id, protocol_version):
-            result = await session.read_resource(AnyUrl("basic://config"))
-            assert len(result.contents) == 1
+
+            async def on_resumption_token_update(token: str) -> None:
+                nonlocal last_event_id
+                last_event_id = token
+
+            send_request_task = asyncio.create_task(
+                session.send_request(
+                    types.ClientRequest(
+                        types.ReadResourceRequest(
+                            method="resources/read",
+                            params=types.ReadResourceRequestParams(
+                                uri=AnyUrl("elicit://confirm"),
+                            ),
+                        ),
+                    ),
+                    types.ReadResourceResult,
+                    metadata=ClientMessageMetadata(
+                        on_resumption_token_update=on_resumption_token_update,
+                    ),
+                )
+            )
+
+            await elicitation_event.wait()
+
+            while last_event_id == None:
+                await asyncio.sleep(0.01)
+
+            send_request_task.cancel()
+            try:
+                await send_request_task
+            except:
+                pass
 
         print(f"Rebooting application running at {self.rbt.url()}...")
 
@@ -199,15 +314,45 @@ class TestResourceContext(unittest.IsolatedAsyncioTestCase):
 
         print(f"... application now at {self.rbt.url()}")
 
+        async def elicitation_callback_after_reboot(
+            context: RequestContext[ClientSession, None],
+            params: types.ElicitRequestParams,
+        ):
+            assert "Sorry, we got disconnected" in params.message
+            assert "Do you want to proceed?" in params.message
+            return types.ElicitResult(
+                action="accept",
+                content={"confirmed": True, "reason": "Resumed after reboot"}
+            )
+
         async with reconnect(
             self.rbt.url() + "/mcp",
             session_id=session_id,
             protocol_version=protocol_version,
-            next_request_id=session._request_id,
+            next_request_id=session._request_id - 1,
+            elicitation_callback=elicitation_callback_after_reboot,
         ) as session:
-            result = await session.read_resource(AnyUrl("basic://config"))
+
+            assert last_event_id is not None
+
+            result = await session.send_request(
+                types.ClientRequest(
+                    types.ReadResourceRequest(
+                        method="resources/read",
+                        params=types.ReadResourceRequestParams(
+                            uri=AnyUrl("elicit://confirm"),
+                        ),
+                    ),
+                ),
+                types.ReadResourceResult,
+                metadata=ClientMessageMetadata(
+                    resumption_token=last_event_id,
+                ),
+            )
+
             assert len(result.contents) == 1
-            assert result.contents[0].text == "config-data"
+            assert "User confirmed: True" in result.contents[0].text
+            assert "Resumed after reboot" in result.contents[0].text
 
 
 if __name__ == '__main__':
