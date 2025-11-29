@@ -314,6 +314,7 @@ class Tool:
     description: str | None
     annotations: mcp.types.ToolAnnotations | None
     structured_output: bool | None
+    meta: dict[str, Any] | None = None
 
 
 LogLevel: TypeAlias = Literal["DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"]
@@ -539,6 +540,7 @@ class DurableMCP:
         description: str | None = None,
         annotations: mcp.types.ToolAnnotations | None = None,
         structured_output: bool | None = None,
+        meta: dict[str, Any] | None = None,
     ) -> Callable[[mcp.types.AnyFunction], mcp.types.AnyFunction]:
         """Decorator to register a tool.
 
@@ -555,6 +557,7 @@ class DurableMCP:
                 - If None, auto-detects based on the function's return type annotation
                 - If True, unconditionally creates a structured tool (return type annotation permitting)
                 - If False, unconditionally creates an unstructured tool
+            meta: Optional metadata dict exposed as _meta in the MCP protocol.
 
         Example:
             @server.tool()
@@ -585,6 +588,7 @@ class DurableMCP:
                 description=description,
                 annotations=annotations,
                 structured_output=structured_output,
+                meta=meta,
             )
             return fn
 
@@ -598,6 +602,7 @@ class DurableMCP:
         description: str | None = None,
         annotations: mcp.types.ToolAnnotations | None = None,
         structured_output: bool | None = None,
+        meta: dict[str, Any] | None = None,
     ) -> None:
         self._tools.append(
             Tool(
@@ -607,6 +612,7 @@ class DurableMCP:
                 description=description,
                 annotations=annotations,
                 structured_output=structured_output,
+                meta=meta,
             )
         )
 
@@ -711,6 +717,7 @@ def _streamable_http_app(
             description=tool.description,
             annotations=tool.annotations,
             structured_output=tool.structured_output,
+            meta=tool.meta,
         )
 
     _servers[path] = mcp._mcp_server
