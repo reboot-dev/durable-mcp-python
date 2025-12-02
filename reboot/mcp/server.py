@@ -1202,41 +1202,49 @@ class StreamableHTTPASGIApp:
         _is_vscode: bool | None = None
 
         async def is_vscode():
-            """Returns true if this session client is Visual Studio Code."""
+            """Returns true if this session client is Visual Studio Code.
+
+            Non-blocking: returns False immediately if client_info not
+            available yet. Once VSCode is confirmed, caches the result.
+            """
             nonlocal _is_vscode
             if _is_vscode is None:
-                backoff = Backoff(max_backoff_seconds=2)
-                while _is_vscode is None:
-                    try:
-                        # TODO: not using `session.reactively().get()`
-                        # because it doesn't properly propagate
-                        # `Session.GetAborted`.
-                        response = await session.get(context)
+                try:
+                    # TODO: not using `session.reactively().get()`
+                    # because it doesn't properly propagate
+                    # `Session.GetAborted`.
+                    response = await session.get(context)
 
-                        # Need to wait until session has been initialized,
-                        # which is once `client_info` is populated.
-                        if not response.HasField("client_info"):
-                            await backoff()
-                            continue
+                    # If session hasn't been initialized yet (no client_info),
+                    # return False immediately rather than blocking the
+                    # HTTP response for 15 seconds.
+                    # We'll check again on subsequent calls.
+                    if not response.HasField("client_info"):
+                        logger.debug(f"is_vscode: client_info not available (session may not be initialized), returning False (non-blocking). Session state: {response}")
+                        return False
 
-                        # Technically `name` is required but at least the
-                        # MCP SDK doesn't validate it via Pydantic, but
-                        # Visual Studio Code always seems to include its
-                        # name, so if we don't have a name it is not
-                        # Visual Studio Code.
-                        if response.client_info.HasField("name"):
-                            _is_vscode = (
-                                response.client_info.name == "Visual Studio Code"
-                            )
-                        else:
-                            _is_vscode = False
-                    except Session.GetAborted as aborted:
-                        if type(aborted.error) == StateNotConstructed:
-                            await backoff()
-                            continue
-                        raise
-            assert _is_vscode is not None
-            return _is_vscode
+                    # Technically `name` is required but at least the
+                    # MCP SDK doesn't validate it via Pydantic, but
+                    # Visual Studio Code always seems to include its
+                    # name, so if we don't have a name it is not
+                    # Visual Studio Code.
+                    if response.client_info.HasField("name"):
+                        _is_vscode = (
+                            response.client_info.name == "Visual Studio Code"
+                        )
+                        logger.debug(f"is_vscode: Detected client={response.client_info.name}, is_vscode={_is_vscode}")
+                    else:
+                        _is_vscode = False
+                        logger.debug(f"is_vscode: No name in client_info, assuming not VSCode")
+                except Session.GetAborted as aborted:
+                    if type(aborted.error) == StateNotConstructed:
+                        # State not constructed yet - return False for now.
+                        logger.debug(f"is_vscode: State not constructed, returning False (non-blocking)")
+                        return False
+                    raise
+
+            # Return cached value (or False if not yet determined).
+            return _is_vscode if _is_vscode is not None else False
 
         # If this is a GET and the client is Visual Studio Code always
         # ensure it has a 'last-event-id' so that it always replays
